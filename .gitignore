@@ -13,5 +13,10 @@ compile_commands.json
 *.dylib
 *.dSYM/
 
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
 # OpenMemory - IDE/Assistant specific rules
 .cursor/rules/openmemory.mdc
