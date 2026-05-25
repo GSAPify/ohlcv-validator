@@ -34,10 +34,21 @@ if(APPLE)
     list(PREPEND CMAKE_PREFIX_PATH "${HOMEBREW_PREFIX}")
 endif()
 
+# Homebrew installs OpenSSL keg-only; point CMake at it explicitly.
+if(APPLE AND NOT DEFINED OPENSSL_ROOT_DIR)
+    execute_process(
+        COMMAND brew --prefix openssl
+        OUTPUT_VARIABLE OPENSSL_ROOT_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
+
 find_package(Boost REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(simdjson REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 
 add_executable(ohlcv_validator
     src/main.cpp
@@ -48,6 +59,20 @@ target_link_libraries(ohlcv_validator PRIVATE
     spdlog::spdlog
     simdjson::simdjson
     nlohmann_json::nlohmann_json
+)
+
+add_executable(alpaca_ingest
+    src/bin/alpaca_ingest.cpp
+    src/ingest/alpaca_client.cpp
+)
+target_include_directories(alpaca_ingest PRIVATE src)
+target_link_libraries(alpaca_ingest PRIVATE
+    Boost::headers
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    Threads::Threads
 )
 
 enable_testing()
