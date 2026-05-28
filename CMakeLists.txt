@@ -64,6 +64,7 @@ target_link_libraries(ohlcv_validator PRIVATE
 add_executable(alpaca_ingest
     src/bin/alpaca_ingest.cpp
     src/ingest/alpaca_client.cpp
+    src/ingest/parser.cpp
 )
 target_include_directories(alpaca_ingest PRIVATE src)
 target_link_libraries(alpaca_ingest PRIVATE
@@ -71,6 +72,7 @@ target_link_libraries(alpaca_ingest PRIVATE
     OpenSSL::SSL
     OpenSSL::Crypto
     spdlog::spdlog
+    simdjson::simdjson
     nlohmann_json::nlohmann_json
     Threads::Threads
 )

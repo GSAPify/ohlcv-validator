@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 
 #include "ingest/alpaca_client.h"
+#include "ingest/parser.h"
 #include "util/timing.h"
 
 namespace {
@@ -48,11 +49,33 @@ int main() {
         client.subscribe({"AAPL"}, {}, {"AAPL"});
         spdlog::info("subscription response: {}", client.read_frame());
 
+        ohlcv::ingest::Parser parser;
+
         spdlog::info("entering read loop; Ctrl+C to stop");
         while (!g_stop.load(std::memory_order_relaxed)) {
             const auto arrival_ns = ohlcv::util::now_ns();
             const auto frame      = client.read_frame();
-            std::cout << arrival_ns << ' ' << frame << '\n';
+            const auto parsed     = parser.parse(frame);
+
+            for (const auto& t : parsed.trades) {
+                std::cout << "TRADE " << arrival_ns << ' ' << t.symbol
+                          << " p=" << t.price << " s=" << t.size
+                          << " x=" << t.exchange << " z=" << t.tape
+                          << " ts=" << t.ts_ns << '\n';
+            }
+            for (const auto& b : parsed.bars) {
+                std::cout << "BAR   " << arrival_ns << ' ' << b.symbol
+                          << " o=" << b.open << " h=" << b.high
+                          << " l=" << b.low  << " c=" << b.close
+                          << " v=" << b.volume << " n=" << b.trade_count
+                          << " vw=" << b.vwap << " ts=" << b.start_ns << '\n';
+            }
+            for (const auto& e : parsed.errors) {
+                spdlog::error("alpaca error: {}", e);
+            }
+            for (const auto& u : parsed.unknown_types) {
+                spdlog::warn("unhandled message type: {}", u);
+            }
         }
     } catch (const std::exception& e) {
         spdlog::error("fatal: {}", e.what());
