@@ -12,7 +12,33 @@ Most "market data validators" are FastAPI services querying daily bars from Poly
 
 ## Status
 
-`v0.0.1` — toolchain bootstrapped, baseline timing primitive in place.
+`v0.1.0` — live JSON ingest + a zero-allocation validator measured over a binary
+replay path.
+
+```
+Alpaca IEX ──ws──► parse ──► Trade/Bar          ← live demo (JSON, convenience types)
+                                                  "it works on real data"
+
+binary file ──mmap──► WireRecord ──► Validator ──► LatencyHistogram
+  (fixed-layout POD,    no parse,     zero alloc      percentiles
+   ITCH/SBE-shaped)     no copy       after ctor)     ← the measured path
+```
+
+## Benchmark
+
+Per-record decode+validate, single core, 1M-record dataset, 200 passes
+(`replay_bench`). Measured on Apple Silicon (M-series) — see platform note; the
+clock floor here is ~41ns, so timing is batched per-pass and divided, not
+per-call.
+
+```
+per-record decode+validate latency:  ~2 ns mean   (p50 2, p99 3, max 3)
+throughput:                          ~496 M records / sec
+```
+
+The validator catches non-positive prices, inverted OHLC bands, out-of-band
+VWAP, volume/trade-count inconsistency, per-symbol timestamp regressions, and
+dropped-message sequence gaps — all on a heap-free hot path.
 
 ## Build
 

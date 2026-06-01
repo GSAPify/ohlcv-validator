@@ -13,6 +13,10 @@ compile_commands.json
 *.dylib
 *.dSYM/
 
+# Generated replay datasets — reproducible from gen_dataset, don't commit
+data/
+*.bin
+
 # Secrets — never commit
 .env
 .env.*
