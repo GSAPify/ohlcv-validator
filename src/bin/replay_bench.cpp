@@ -147,14 +147,18 @@ int main(int argc, char** argv) {
     std::printf("  total checks : %llu\n",
                 (unsigned long long)(count * passes));
     std::printf("\n");
-    std::printf("per-record decode+validate latency (ns):\n");
-    std::printf("  min    : %llu\n", (unsigned long long)hist.min());
-    std::printf("  mean   : %.2f\n", mean_ns);
-    std::printf("  p50    : %llu\n", (unsigned long long)hist.percentile(0.50));
-    std::printf("  p99    : %llu\n", (unsigned long long)hist.percentile(0.99));
-    std::printf("  p99.9  : %llu\n", (unsigned long long)hist.percentile(0.999));
-    std::printf("  max    : %llu\n", (unsigned long long)hist.max());
-    std::printf("  throughput ~ %.1f M records/sec\n", thru / 1e6);
+    std::printf("decode+validate (single core, allocation-free):\n");
+    std::printf("  throughput      : %.1f M records/sec\n", thru / 1e6);
+    std::printf("  mean            : %.2f ns/record\n", mean_ns);
+    std::printf("  pass-mean spread: %llu..%llu ns (over %llu passes)\n",
+                (unsigned long long)hist.min(),
+                (unsigned long long)hist.max(),
+                (unsigned long long)passes);
+    std::printf("\n");
+    std::printf("  note: per-record cost is below the ~41ns M-series clock\n");
+    std::printf("  resolution, so this is a THROUGHPUT measurement — the rows\n");
+    std::printf("  above are pass-means, not a latency distribution. A true\n");
+    std::printf("  per-record tail needs an x86 host with rdtscp (see README).\n");
     std::printf("\n");
     std::printf("violations caught (per pass):\n");
     std::printf("  bad trades         : %llu\n", (unsigned long long)bad_trades);

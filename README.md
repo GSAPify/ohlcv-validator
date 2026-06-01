@@ -26,19 +26,27 @@ binary file ──mmap──► WireRecord ──► Validator ──► Latency
 
 ## Benchmark
 
-Per-record decode+validate, single core, 1M-record dataset, 200 passes
-(`replay_bench`). Measured on Apple Silicon (M-series) — see platform note; the
-clock floor here is ~41ns, so timing is batched per-pass and divided, not
-per-call.
+Decode+validate, single core, 1M-record dataset, 200 passes (`replay_bench`),
+on Apple Silicon (M-series).
 
 ```
-per-record decode+validate latency:  ~2 ns mean   (p50 2, p99 3, max 3)
-throughput:                          ~496 M records / sec
+throughput:  ~500 M records / sec
+mean:        ~2 ns / record   (allocation-free hot path)
 ```
+
+This is a **throughput** number, not a latency distribution. Per-record cost
+(~2ns) sits below the M-series clock resolution (~41ns), so timing is batched
+per-pass and divided — you cannot measure a per-record tail on this hardware.
+A real latency histogram (p50/p99/p999) needs an x86 host with an invariant TSC
+and `rdtscp`; that's the eventual measurement host (see platform note below).
+
+The hot path is allocation-free, and that's *proven*, not asserted:
+`tests/test_alloc_guard.cpp` overrides global `operator new` and requires zero
+heap allocations through a 100k-record validate stream.
 
 The validator catches non-positive prices, inverted OHLC bands, out-of-band
 VWAP, volume/trade-count inconsistency, per-symbol timestamp regressions, and
-dropped-message sequence gaps — all on a heap-free hot path.
+dropped-message sequence gaps.
 
 ## Build
 

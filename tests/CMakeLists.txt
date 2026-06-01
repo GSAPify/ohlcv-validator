@@ -7,6 +7,7 @@ add_executable(unit_tests
     test_parser.cpp
     test_validator.cpp
     test_histogram.cpp
+    test_alloc_guard.cpp
     ${CMAKE_SOURCE_DIR}/src/ingest/parser.cpp
     ${CMAKE_SOURCE_DIR}/src/validate/validator.cpp
 )
