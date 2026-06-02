@@ -24,7 +24,20 @@ enum Violation : std::uint32_t {
     // Sequencing (per-symbol, stateful)
     kTimestampRegression   = 1u << 8,  // ts went backwards for this symbol
     kSequenceGap           = 1u << 9,  // seq jumped by >1 — a message was dropped
+    // Reconstruction (per-symbol, stateful): do the bar's constituent trades
+    // actually rebuild it? This is the cross-record check that distinguishes a
+    // real OHLCV validator from a bounds-checker.
+    kBarVolumeReconstructMismatch     = 1u << 10,  // Σ trade size != bar.volume
+    kBarTradeCountReconstructMismatch = 1u << 11,  // trade count != bar.trade_count
+    kBarVwapReconstructMismatch       = 1u << 12,  // recomputed vwap != bar.vwap
+    kBarOhlcReconstructMismatch       = 1u << 13,  // first/last/max/min != O/C/H/L
 };
+
+// Relative tolerance for reconstructed *price* comparisons (vwap and OHLC). Real
+// feeds round bar prices to a tick, so bit-exact agreement is the wrong test and
+// would false-positive on every live bar. Volume and trade_count are integers and
+// are compared exactly.
+inline constexpr double kPriceRelTol = 1e-6;
 
 struct Result {
     std::uint32_t flags = kNone;
@@ -53,16 +66,34 @@ private:
         std::uint64_t last_ts  = 0;
         std::uint64_t last_seq = 0;
         bool          seen     = false;
+
+        // Trade accumulator for bar reconstruction: the aggregate of the VALID
+        // trades seen for this symbol since its last bar. Reset when a bar
+        // reconciles against it.
+        bool          has_trades = false;
+        std::uint64_t acc_count  = 0;
+        std::uint64_t acc_volume = 0;    // Σ size
+        double        acc_pv     = 0.0;  // Σ price·size  (the VWAP numerator)
+        double        acc_open   = 0.0;  // first valid trade price since reset
+        double        acc_high   = 0.0;
+        double        acc_low    = 0.0;
+        double        acc_close  = 0.0;  // last valid trade price
     };
 
     // Find (or insert) the slot for a symbol. Returns nullptr only if the table
     // is full — a deliberate, observable failure rather than silent corruption.
     Slot* slot_for(const char (&symbol)[model::kSymbolLen]) noexcept;
 
-    // Shared sequencing check for both trades and bars.
-    void check_sequencing(const char (&symbol)[model::kSymbolLen],
-                          std::uint64_t ts, std::uint64_t seq,
-                          Result& out) noexcept;
+    // Sequencing check shared by trades and bars; operates on an already-resolved
+    // slot so the hot path does a single table lookup per record.
+    static void check_sequencing(Slot& s, std::uint64_t ts, std::uint64_t seq,
+                                 Result& out) noexcept;
+
+    // Fold one valid trade into the slot's accumulator.
+    static void accumulate(Slot& s, double price, std::uint64_t size) noexcept;
+
+    // Reconcile a bar against the accumulated trades, then reset the accumulator.
+    static void reconcile(Slot& s, const model::WireBar& b, Result& out) noexcept;
 
     std::array<Slot, kCapacity> table_{};
 };

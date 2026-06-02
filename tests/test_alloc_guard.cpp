@@ -45,16 +45,18 @@ TEST(AllocGuard, HotPathDoesNotAllocate) {
     WireTrade trades[kSymbols]{};
     WireBar   bars[kSymbols]{};
     for (int i = 0; i < kSymbols; ++i) {
+        const double p = 100.0 + i;
         std::strncpy(trades[i].symbol, names[i], sizeof(trades[i].symbol));
-        trades[i].price = 100.0 + i;
+        trades[i].price = p;
         trades[i].size  = 10;
+        // Each bar is built to exactly reconstruct the single trade that
+        // precedes it in the loop below, so the stream stays clean (zero
+        // violations) and the test asserts both zero-alloc AND zero flags.
         std::strncpy(bars[i].symbol, names[i], sizeof(bars[i].symbol));
-        bars[i].open = bars[i].vwap = 100.0 + i;
-        bars[i].high = 101.0 + i;
-        bars[i].low  = 99.0 + i;
-        bars[i].close = 100.5 + i;
-        bars[i].volume = 500;
-        bars[i].trade_count = 5;
+        bars[i].open = bars[i].high = bars[i].low = bars[i].close = p;
+        bars[i].vwap        = p;
+        bars[i].volume      = trades[i].size;  // one trade of this size
+        bars[i].trade_count = 1;
     }
 
     // Touch the validator once per symbol so any first-use table growth (there
