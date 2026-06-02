@@ -87,6 +87,7 @@ int main(int argc, char** argv) {
     // Warm pass: fault pages in and warm caches so the first timed pass isn't
     // an outlier. Also collect the violation breakdown once.
     std::uint64_t bad_trades = 0, bad_bars = 0, seq_gaps = 0, ts_regress = 0;
+    std::uint64_t recon_vol = 0, recon_cnt = 0, recon_vwap = 0, recon_ohlc = 0;
     {
         ohlcv::validate::Validator v;
         for (std::uint64_t i = 0; i < count; ++i) {
@@ -109,6 +110,10 @@ int main(int argc, char** argv) {
                     ++bad_bars;
                 if (r.has(ohlcv::validate::kSequenceGap)) ++seq_gaps;
                 if (r.has(ohlcv::validate::kTimestampRegression)) ++ts_regress;
+                if (r.has(ohlcv::validate::kBarVolumeReconstructMismatch)) ++recon_vol;
+                if (r.has(ohlcv::validate::kBarTradeCountReconstructMismatch)) ++recon_cnt;
+                if (r.has(ohlcv::validate::kBarVwapReconstructMismatch)) ++recon_vwap;
+                if (r.has(ohlcv::validate::kBarOhlcReconstructMismatch)) ++recon_ohlc;
             }
         }
     }
@@ -161,10 +166,14 @@ int main(int argc, char** argv) {
     std::printf("  per-record tail needs an x86 host with rdtscp (see README).\n");
     std::printf("\n");
     std::printf("violations caught (per pass):\n");
-    std::printf("  bad trades         : %llu\n", (unsigned long long)bad_trades);
-    std::printf("  bad bars           : %llu\n", (unsigned long long)bad_bars);
-    std::printf("  sequence gaps      : %llu\n", (unsigned long long)seq_gaps);
-    std::printf("  ts regressions     : %llu\n", (unsigned long long)ts_regress);
+    std::printf("  bad trades             : %llu\n", (unsigned long long)bad_trades);
+    std::printf("  bad bars               : %llu\n", (unsigned long long)bad_bars);
+    std::printf("  sequence gaps          : %llu\n", (unsigned long long)seq_gaps);
+    std::printf("  ts regressions         : %llu\n", (unsigned long long)ts_regress);
+    std::printf("  recon volume mismatch  : %llu\n", (unsigned long long)recon_vol);
+    std::printf("  recon count mismatch   : %llu\n", (unsigned long long)recon_cnt);
+    std::printf("  recon vwap mismatch    : %llu\n", (unsigned long long)recon_vwap);
+    std::printf("  recon ohlc mismatch    : %llu\n", (unsigned long long)recon_ohlc);
     std::printf("\n[checksum %llu]\n", (unsigned long long)checksum);
 
     ::munmap(const_cast<std::byte*>(m.base), m.size);

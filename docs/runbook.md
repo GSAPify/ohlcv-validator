@@ -81,6 +81,16 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-03** — validate: trade→bar reconstruction cross-check. Per-symbol
+  trade accumulator (Σsize, Σprice·size, running O/H/L/C) in the existing Slot
+  table; bars reconcile against it (volume/count exact, vwap/OHLC within a
+  relative tolerance — real feeds round, so not bit-exact). Reconstructs from
+  valid trades only. `gen_dataset` reworked to emit *consistent* trades+bars
+  with one isolated defect per window; `replay_bench` reports the four
+  reconstruction-mismatch classes. Throughput moved ~500M→~167M rec/s (the
+  accumulator runs on every trade); held steady across 10^10 validations on an
+  M4 Pro. 10 new tests (51 total). Scale it up: `gen_dataset out.bin 10000000`
+  then `replay_bench out.bin 1000`.
 - **2026-06-02** — replay+bench: binary wire format (`model/wire.h`, fixed-layout
   64-byte POD records), `gen_dataset` (deterministic synthetic dataset with
   injected violations), fixed-bucket `LatencyHistogram`, and `replay_bench`

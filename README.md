@@ -30,9 +30,13 @@ Decode+validate, single core, 1M-record dataset, 200 passes (`replay_bench`),
 on Apple Silicon (M-series).
 
 ```
-throughput:  ~500 M records / sec
-mean:        ~2 ns / record   (allocation-free hot path)
+throughput:  ~167 M records / sec
+mean:        ~6 ns / record   (allocation-free hot path)
 ```
+
+(The per-trade reconstruction accumulator — running on every trade — is what
+moved this from the ~2 ns/record of the bounds-only validator; still allocation-
+free, the work is just real now.)
 
 This is a **throughput** number, not a latency distribution. Per-record cost
 (~2ns) sits below the M-series clock resolution (~41ns), so timing is batched

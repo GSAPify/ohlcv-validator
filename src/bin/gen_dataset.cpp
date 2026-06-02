@@ -59,56 +59,122 @@ int main(int argc, char** argv) {
     std::vector<WireRecord> records;
     records.reserve(n);
 
-    for (std::uint64_t r = 0; r < n; ++r) {
-        const std::size_t s = r % kSymbols.size();
-        ts[s]  += 1'000'000ULL;          // +1ms
-        seq[s] += 1;
-        px[s]  += jitter(rng);
-        if (px[s] < 1.0) px[s] = 1.0;
+    std::uniform_int_distribution<int>           count_dist{8, 12};
+    std::uniform_int_distribution<std::uint64_t> size_dist{1, 100};
 
-        const int roll = pick(rng);      // 0..99, drives violation injection
+    // One defect per bar-window, chosen up front, so injected violations are
+    // isolated and the resulting counts are explainable. Per-trade defects hit
+    // the window's first trade; reconstruction/band defects perturb the emitted
+    // bar. A negative-price tick is excluded from the aggregate on BOTH sides
+    // (here and in the validator), so the bar still reconstructs from the
+    // remaining valid trades.
+    enum Defect {
+        kClean, kCorruptTrade, kSeqGap, kTsRegress,
+        kReconVolume, kReconCount, kReconVwap, kReconOhlc, kBand
+    };
 
-        // ~1 in 50 records is a bar; the rest are trades.
-        if (r % 50 == 49) {
-            WireRecord rec{};
-            rec.type      = static_cast<std::uint8_t>(RecordType::Bar);
-            WireBar& b    = rec.body.bar;
-            set_symbol(b.symbol, kSymbols[s]);
-            b.seq         = seq[s];
-            b.start_ns    = ts[s];
-            b.low         = px[s] - 0.5;
-            b.high        = px[s] + 0.5;
-            b.open        = px[s];
-            b.close       = px[s] + jitter(rng) * 0.2;
-            b.vwap        = px[s];
-            b.volume      = 1000;
-            b.trade_count = 20;
+    // Each window emits a run of trades for one symbol, then the bar that closes
+    // it — built from the trades' true aggregate. Round-robin over symbols.
+    std::size_t s = kSymbols.size() - 1;  // so the first window uses symbol 0
+    while (records.size() < n) {
+        s = (s + 1) % kSymbols.size();
 
-            if (roll < 2) b.low = b.high + 5.0;   // inverted band
-            if (roll == 2) b.trade_count = 0;     // volume without trades
-            records.push_back(rec);
-            continue;
+        const int roll = pick(rng);       // ~1% each defect; ~92% clean
+        Defect defect = kClean;
+        switch (roll) {
+            case 0: defect = kCorruptTrade; break;
+            case 1: defect = kSeqGap;       break;
+            case 2: defect = kTsRegress;    break;
+            case 3: defect = kReconVolume;  break;
+            case 4: defect = kReconCount;   break;
+            case 5: defect = kReconVwap;    break;
+            case 6: defect = kReconOhlc;    break;
+            case 7: defect = kBand;         break;
+            default: break;
         }
 
-        WireRecord rec{};
-        rec.type        = static_cast<std::uint8_t>(RecordType::Trade);
-        WireTrade& t    = rec.body.trade;
-        set_symbol(t.symbol, kSymbols[s]);
-        t.seq           = seq[s];
-        t.ts_ns         = ts[s];
-        t.trade_id      = r;
-        t.price         = px[s];
-        t.size          = 1 + static_cast<std::uint64_t>(roll % 50);
-        t.exchange      = 'V';
-        t.tape          = 'C';
+        // Accumulate the window's valid trades; the bar is built from this.
+        std::uint64_t acc_vol = 0, acc_cnt = 0;
+        double acc_pv = 0.0, acc_open = 0.0, acc_high = 0.0, acc_low = 0.0,
+               acc_close = 0.0;
+        bool have = false;
 
-        if (roll == 0) {                  // ~1% non-positive price
-            t.price = -1.0;
-        } else if (roll == 1) {           // ~1% sequence gap (drop 3 messages)
-            seq[s] += 3;
-            t.seq   = seq[s];
-        } else if (roll == 2) {           // ~1% timestamp regression
-            t.ts_ns -= 5'000'000ULL;
+        const int n_trades = count_dist(rng);
+        for (int k = 0; k < n_trades && records.size() < n; ++k) {
+            ts[s]  += 1'000'000ULL;       // +1ms
+            seq[s] += 1;
+            px[s]  += jitter(rng);
+            if (px[s] < 1.0) px[s] = 1.0;
+
+            WireRecord rec{};
+            rec.type     = static_cast<std::uint8_t>(RecordType::Trade);
+            WireTrade& t = rec.body.trade;
+            set_symbol(t.symbol, kSymbols[s]);
+            t.seq      = seq[s];
+            t.ts_ns    = ts[s];
+            t.trade_id = records.size();
+            t.price    = px[s];
+            t.size     = size_dist(rng);
+            t.exchange = 'V';
+            t.tape     = 'C';
+
+            bool valid = true;
+            if (k == 0) {                 // per-trade defects land on the first
+                if (defect == kCorruptTrade) {
+                    t.price = -1.0;
+                    valid   = false;
+                } else if (defect == kSeqGap) {
+                    seq[s] += 3;          // drop 3 messages
+                    t.seq   = seq[s];
+                } else if (defect == kTsRegress) {
+                    t.ts_ns -= 5'000'000ULL;
+                }
+            }
+
+            // Mirror the validator: only valid trades feed the aggregate.
+            if (valid) {
+                if (!have) {
+                    acc_open = acc_high = acc_low = t.price;
+                    have = true;
+                } else {
+                    if (t.price > acc_high) acc_high = t.price;
+                    if (t.price < acc_low)  acc_low  = t.price;
+                }
+                acc_close = t.price;
+                acc_cnt  += 1;
+                acc_vol  += t.size;
+                acc_pv   += t.price * static_cast<double>(t.size);
+            }
+            records.push_back(rec);
+        }
+
+        if (records.size() >= n) break;
+
+        // Emit the bar from the accumulated aggregate.
+        ts[s]  += 1'000'000ULL;
+        seq[s] += 1;
+        WireRecord rec{};
+        rec.type   = static_cast<std::uint8_t>(RecordType::Bar);
+        WireBar& b = rec.body.bar;
+        set_symbol(b.symbol, kSymbols[s]);
+        b.seq         = seq[s];
+        b.start_ns    = ts[s];
+        b.volume      = acc_vol;
+        b.trade_count = acc_cnt;
+        b.open        = acc_open;
+        b.high        = acc_high;
+        b.low         = acc_low;
+        b.close       = acc_close;
+        b.vwap        = acc_vol != 0 ? acc_pv / static_cast<double>(acc_vol)
+                                     : acc_open;
+
+        switch (defect) {                 // bar-level perturbations
+            case kReconVolume: b.volume      += 100;     break;
+            case kReconCount:  b.trade_count += 1;        break;
+            case kReconVwap:   b.vwap        *= 1.001;    break;  // >> kPriceRelTol
+            case kReconOhlc:   b.high        += 5.0;      break;  // trades never hit it
+            case kBand:        b.low = b.high + 5.0;      break;  // inverted band
+            default: break;
         }
         records.push_back(rec);
     }
