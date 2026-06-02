@@ -77,5 +77,19 @@ target_link_libraries(alpaca_ingest PRIVATE
     Threads::Threads
 )
 
+# Synthetic binary dataset generator for the replay benchmark.
+add_executable(gen_dataset
+    src/bin/gen_dataset.cpp
+)
+target_include_directories(gen_dataset PRIVATE src)
+
+# Headline artifact: replay a binary dataset through the validator and report
+# a per-record latency histogram.
+add_executable(replay_bench
+    src/bin/replay_bench.cpp
+    src/validate/validator.cpp
+)
+target_include_directories(replay_bench PRIVATE src)
+
 enable_testing()
 add_subdirectory(tests)
