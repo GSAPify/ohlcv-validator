@@ -31,6 +31,11 @@ enum Violation : std::uint32_t {
     kBarTradeCountReconstructMismatch = 1u << 11,  // trade count != bar.trade_count
     kBarVwapReconstructMismatch       = 1u << 12,  // recomputed vwap != bar.vwap
     kBarOhlcReconstructMismatch       = 1u << 13,  // first/last/max/min != O/C/H/L
+    // Quote invariants (per-record, stateless)
+    kQuoteCrossed          = 1u << 14,  // bid > ask — the book is crossed
+    kQuoteLocked           = 1u << 15,  // bid == ask — the book is locked
+    kQuoteNonPositive      = 1u << 16,  // bid or ask price <= 0
+    kQuoteZeroSize         = 1u << 17,  // bid or ask size is 0
 };
 
 // Relative tolerance for reconstructed *price* comparisons (vwap and OHLC). Real
@@ -56,6 +61,7 @@ class Validator {
 public:
     [[nodiscard]] Result check(const model::WireTrade& t) noexcept;
     [[nodiscard]] Result check(const model::WireBar& b) noexcept;
+    [[nodiscard]] Result check(const model::WireQuote& q) noexcept;
 
 private:
     static constexpr std::size_t kBits     = 12;                  // 4096 slots

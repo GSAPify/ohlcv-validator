@@ -160,4 +160,25 @@ Result Validator::check(const model::WireBar& b) noexcept {
     return r;
 }
 
+Result Validator::check(const model::WireQuote& q) noexcept {
+    Result r;
+
+    if (q.bid_price <= 0.0 || q.ask_price <= 0.0) r.flags |= kQuoteNonPositive;
+    if (q.bid_size == 0 || q.ask_size == 0)       r.flags |= kQuoteZeroSize;
+
+    // A healthy book has bid < ask. bid > ask is *crossed* (you could buy below
+    // where someone will sell — usually stale/bad data across venues); bid == ask
+    // is *locked*. Both are the kind of order-book anomaly trade/bar checks miss.
+    if (q.bid_price > q.ask_price) {
+        r.flags |= kQuoteCrossed;
+    } else if (q.bid_price == q.ask_price) {
+        r.flags |= kQuoteLocked;
+    }
+
+    Slot* s = slot_for(q.symbol);
+    if (s == nullptr) return r;  // table full — skip stateful checks
+    check_sequencing(*s, q.ts_ns, q.seq, r);
+    return r;  // quotes don't feed bar reconstruction
+}
+
 }  // namespace ohlcv::validate
