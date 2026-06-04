@@ -58,7 +58,8 @@ public:
     [[nodiscard]] Result check(const model::WireBar& b) noexcept;
 
 private:
-    static constexpr std::size_t kCapacity = 4096;  // power of two
+    static constexpr std::size_t kBits     = 12;                  // 4096 slots
+    static constexpr std::size_t kCapacity = std::size_t{1} << kBits;
     static constexpr std::size_t kMask     = kCapacity - 1;
 
     struct Slot {

@@ -91,5 +91,13 @@ add_executable(replay_bench
 )
 target_include_directories(replay_bench PRIVATE src)
 
+# Multi-threaded replay benchmark: shard by symbol across cores.
+add_executable(replay_bench_mt
+    src/bin/replay_bench_mt.cpp
+    src/validate/validator.cpp
+)
+target_include_directories(replay_bench_mt PRIVATE src)
+target_link_libraries(replay_bench_mt PRIVATE Threads::Threads)
+
 enable_testing()
 add_subdirectory(tests)

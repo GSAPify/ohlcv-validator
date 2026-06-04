@@ -7,8 +7,12 @@
 // violations so the validator has something to catch and the benchmark can
 // report nonzero violation counts.
 //
-// Usage: gen_dataset [output_path] [record_count]
-//        defaults: data/replay.bin, 1,000,000 records
+// Usage: gen_dataset [output_path] [record_count] [symbol_count]
+//        defaults: data/replay.bin, 1,000,000 records, 8 symbols
+//
+// symbol_count drives how many distinct symbols the stream carries. It caps the
+// parallelism of a shard-by-symbol consumer: you can't spread 8 symbols across
+// 14 cores. Bump it (e.g. 256) to exercise multicore validation.
 
 #include <array>
 #include <cstdint>
@@ -27,12 +31,30 @@ using ohlcv::model::WireTrade;
 using ohlcv::replay::RecordType;
 using ohlcv::replay::WireRecord;
 
-constexpr std::array<const char*, 8> kSymbols = {
+// The 8 "real" tickers for small datasets; beyond that we synthesize tickers
+// ("S00008", "S00009", …). All that matters for sharding is that every symbol's
+// 8-byte key is distinct.
+constexpr std::array<const char*, 8> kRealSymbols = {
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD"};
 
-void set_symbol(char (&dst)[ohlcv::model::kSymbolLen], const char* sym) {
+std::vector<std::string> make_symbols(std::size_t count) {
+    std::vector<std::string> out;
+    out.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (i < kRealSymbols.size()) {
+            out.emplace_back(kRealSymbols[i]);
+        } else {
+            char buf[ohlcv::model::kSymbolLen + 1];
+            std::snprintf(buf, sizeof(buf), "S%05zu", i);  // <= 8 chars
+            out.emplace_back(buf);
+        }
+    }
+    return out;
+}
+
+void set_symbol(char (&dst)[ohlcv::model::kSymbolLen], const std::string& sym) {
     std::memset(dst, 0, sizeof(dst));
-    std::strncpy(dst, sym, sizeof(dst));
+    std::strncpy(dst, sym.c_str(), sizeof(dst));
 }
 
 }  // namespace
@@ -41,19 +63,23 @@ int main(int argc, char** argv) {
     const std::string path  = argc > 1 ? argv[1] : "data/replay.bin";
     const std::uint64_t n   = argc > 2 ? std::strtoull(argv[2], nullptr, 10)
                                        : 1'000'000ULL;
+    std::size_t sym_count   = argc > 3
+        ? static_cast<std::size_t>(std::strtoull(argv[3], nullptr, 10)) : 8;
+    if (sym_count < 1) sym_count = 1;
+
+    const std::vector<std::string> symbols = make_symbols(sym_count);
 
     std::mt19937_64 rng{0xC0FFEEULL};  // fixed seed → reproducible dataset
     std::uniform_real_distribution<double> jitter{-0.5, 0.5};
     std::uniform_int_distribution<int>     pick{0, 99};
 
     // Per-symbol running state so each symbol carries its own monotonic seq/ts.
-    std::array<std::uint64_t, kSymbols.size()> seq{};
-    std::array<std::uint64_t, kSymbols.size()> ts{};
-    std::array<double, kSymbols.size()>        px{};
-    for (std::size_t i = 0; i < kSymbols.size(); ++i) {
-        seq[i] = 1;
-        ts[i]  = 1'700'000'000'000'000'000ULL + i * 1'000'000ULL;
-        px[i]  = 100.0 + static_cast<double>(i) * 10.0;
+    std::vector<std::uint64_t> seq(sym_count, 1);
+    std::vector<std::uint64_t> ts(sym_count);
+    std::vector<double>        px(sym_count);
+    for (std::size_t i = 0; i < sym_count; ++i) {
+        ts[i] = 1'700'000'000'000'000'000ULL + i * 1'000'000ULL;
+        px[i] = 100.0 + static_cast<double>(i % 50) * 10.0;  // keep prices sane
     }
 
     std::vector<WireRecord> records;
@@ -75,9 +101,9 @@ int main(int argc, char** argv) {
 
     // Each window emits a run of trades for one symbol, then the bar that closes
     // it — built from the trades' true aggregate. Round-robin over symbols.
-    std::size_t s = kSymbols.size() - 1;  // so the first window uses symbol 0
+    std::size_t s = sym_count - 1;  // so the first window uses symbol 0
     while (records.size() < n) {
-        s = (s + 1) % kSymbols.size();
+        s = (s + 1) % sym_count;
 
         const int roll = pick(rng);       // ~1% each defect; ~92% clean
         Defect defect = kClean;
@@ -109,7 +135,7 @@ int main(int argc, char** argv) {
             WireRecord rec{};
             rec.type     = static_cast<std::uint8_t>(RecordType::Trade);
             WireTrade& t = rec.body.trade;
-            set_symbol(t.symbol, kSymbols[s]);
+            set_symbol(t.symbol, symbols[s]);
             t.seq      = seq[s];
             t.ts_ns    = ts[s];
             t.trade_id = records.size();
@@ -156,7 +182,7 @@ int main(int argc, char** argv) {
         WireRecord rec{};
         rec.type   = static_cast<std::uint8_t>(RecordType::Bar);
         WireBar& b = rec.body.bar;
-        set_symbol(b.symbol, kSymbols[s]);
+        set_symbol(b.symbol, symbols[s]);
         b.seq         = seq[s];
         b.start_ns    = ts[s];
         b.volume      = acc_vol;
@@ -192,7 +218,7 @@ int main(int argc, char** argv) {
     std::fwrite(records.data(), sizeof(WireRecord), records.size(), f);
     std::fclose(f);
 
-    std::printf("wrote %zu records (%zu bytes/record) to %s\n", records.size(),
-                sizeof(WireRecord), path.c_str());
+    std::printf("wrote %zu records (%zu bytes/record, %zu symbols) to %s\n",
+                records.size(), sizeof(WireRecord), sym_count, path.c_str());
     return 0;
 }

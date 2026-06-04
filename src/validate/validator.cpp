@@ -29,7 +29,13 @@ bool approx_equal(double a, double b) noexcept {
 Validator::Slot* Validator::slot_for(
     const char (&symbol)[model::kSymbolLen]) noexcept {
     const std::uint64_t key = symbol_key(symbol);
-    std::size_t idx = static_cast<std::size_t>(key) & kMask;
+    // Fibonacci hashing: multiply by 2^64/φ and take the top kBits. The raw
+    // symbol bytes cluster in the low bits (e.g. synthetic/numbered tickers that
+    // share a prefix), and a plain `key & kMask` would collapse them all into one
+    // bucket — turning the linear probe into an O(N) scan. Mixing first spreads
+    // any key set evenly across the table.
+    std::size_t idx =
+        static_cast<std::size_t>((key * 0x9E3779B97F4A7C15ULL) >> (64 - kBits));
 
     // Linear probe. Bounded by kCapacity so a full table terminates instead of
     // looping forever.
