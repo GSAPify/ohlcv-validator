@@ -91,8 +91,10 @@ double run(const WireRecord* records, std::uint64_t count, unsigned T,
                 for (const WireRecord& rec : buf) {
                     if (rec.type == static_cast<std::uint8_t>(RecordType::Trade))
                         sum += v.check(rec.body.trade).flags;
-                    else
+                    else if (rec.type == static_cast<std::uint8_t>(RecordType::Bar))
                         sum += v.check(rec.body.bar).flags;
+                    else
+                        sum += v.check(rec.body.quote).flags;
                 }
             }
             checksums[t] = sum;  // each thread writes its own slot — no sharing

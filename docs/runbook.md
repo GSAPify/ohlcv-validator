@@ -118,6 +118,12 @@ Date + one line of what changed and why. Newest first.
   ASan+UBSan over the full suite, TSan over the multicore bench (shard-by-symbol
   is race-free), and 1.59M fuzzer executions on the parser with zero crashes.
   CI gains an ASan+UBSan job. Default Release build unchanged.
+- **2026-06-05** — validate: quote validation. New `WireQuote` wire type (one
+  cache line) + `RecordType::Quote` (binary format v2). Validator gains
+  crossed (bid > ask), locked (bid == ask), non-positive, and zero-size checks;
+  quotes share the per-symbol sequencing but don't feed bar reconstruction.
+  Generator emits quotes (with injected crossed/locked defects); both benches
+  dispatch the third record type. 6 new tests (57 total).
 
 - **2026-06-03** — validate: trade→bar reconstruction cross-check. Per-symbol
   trade accumulator (Σsize, Σprice·size, running O/H/L/C) in the existing Slot
