@@ -81,6 +81,13 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-05** — validate: quote validation. New `WireQuote` wire type (one
+  cache line) + `RecordType::Quote` (binary format v2). Validator gains
+  crossed (bid > ask), locked (bid == ask), non-positive, and zero-size checks;
+  quotes share the per-symbol sequencing but don't feed bar reconstruction.
+  Generator emits quotes (with injected crossed/locked defects); both benches
+  dispatch the third record type. 6 new tests (57 total).
+
 - **2026-06-03** — validate: trade→bar reconstruction cross-check. Per-symbol
   trade accumulator (Σsize, Σprice·size, running O/H/L/C) in the existing Slot
   table; bars reconcile against it (volume/count exact, vwap/OHLC within a
