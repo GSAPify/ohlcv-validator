@@ -28,6 +28,12 @@ jobs:
 
   sanitizers:
     runs-on: macos-latest
+    # gtest and simdjson come from brew un-instrumented; mixing them with
+    # ASan-built code trips a false-positive container-overflow (gtest_discover_tests
+    # runs the binary at build time). Disable just that check — every other ASan
+    # check stays on.
+    env:
+      ASAN_OPTIONS: detect_container_overflow=0
     steps:
       - uses: actions/checkout@v4
 
