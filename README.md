@@ -62,8 +62,9 @@ heap allocations through a 100k-record validate stream.
 
 The validator catches non-positive prices, inverted OHLC bands, out-of-band
 VWAP, volume/trade-count inconsistency, per-symbol timestamp regressions,
-dropped-message sequence gaps, and — the cross-record check — bars whose
-constituent trades fail to reconstruct their volume, count, VWAP, or OHLC.
+dropped-message sequence gaps, bars whose constituent trades fail to reconstruct
+their volume/count/VWAP/OHLC (the cross-record check), and — on quotes — crossed
+(bid > ask) and locked (bid == ask) markets plus non-positive or zero-size sides.
 
 ## Build
 

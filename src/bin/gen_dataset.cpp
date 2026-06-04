@@ -27,6 +27,7 @@
 namespace {
 
 using ohlcv::model::WireBar;
+using ohlcv::model::WireQuote;
 using ohlcv::model::WireTrade;
 using ohlcv::replay::RecordType;
 using ohlcv::replay::WireRecord;
@@ -96,7 +97,8 @@ int main(int argc, char** argv) {
     // remaining valid trades.
     enum Defect {
         kClean, kCorruptTrade, kSeqGap, kTsRegress,
-        kReconVolume, kReconCount, kReconVwap, kReconOhlc, kBand
+        kReconVolume, kReconCount, kReconVwap, kReconOhlc, kBand,
+        kQuoteCrossed, kQuoteLocked
     };
 
     // Each window emits a run of trades for one symbol, then the bar that closes
@@ -116,6 +118,8 @@ int main(int argc, char** argv) {
             case 5: defect = kReconVwap;    break;
             case 6: defect = kReconOhlc;    break;
             case 7: defect = kBand;         break;
+            case 8: defect = kQuoteCrossed; break;
+            case 9: defect = kQuoteLocked;  break;
             default: break;
         }
 
@@ -170,6 +174,34 @@ int main(int argc, char** argv) {
                 acc_cnt  += 1;
                 acc_vol  += t.size;
                 acc_pv   += t.price * static_cast<double>(t.size);
+            }
+            records.push_back(rec);
+        }
+
+        // Emit a couple of quotes for this symbol. They're validated on their own
+        // (they don't feed bar reconstruction). A quote defect makes one crossed
+        // (bid > ask) or locked (bid == ask).
+        for (int qk = 0; qk < 2 && records.size() < n; ++qk) {
+            ts[s]  += 1'000'000ULL;
+            seq[s] += 1;
+            WireRecord rec{};
+            rec.type     = static_cast<std::uint8_t>(RecordType::Quote);
+            WireQuote& q = rec.body.quote;
+            set_symbol(q.symbol, symbols[s]);
+            q.seq          = seq[s];
+            q.ts_ns        = ts[s];
+            q.bid_price    = px[s] - 0.05;
+            q.ask_price    = px[s] + 0.05;
+            q.bid_size     = 1 + size_dist(rng) % 20;
+            q.ask_size     = 1 + size_dist(rng) % 20;
+            q.bid_exchange = 'V';
+            q.ask_exchange = 'V';
+            q.tape         = 'C';
+            if (qk == 0 && defect == kQuoteCrossed) {
+                q.bid_price = px[s] + 0.05;  // bid above ask
+                q.ask_price = px[s] - 0.05;
+            } else if (qk == 0 && defect == kQuoteLocked) {
+                q.bid_price = q.ask_price = px[s];
             }
             records.push_back(rec);
         }

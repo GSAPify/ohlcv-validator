@@ -5,6 +5,7 @@
 #include "validate/validator.h"
 
 using ohlcv::model::WireBar;
+using ohlcv::model::WireQuote;
 using ohlcv::model::WireTrade;
 using ohlcv::validate::Validator;
 namespace v = ohlcv::validate;
@@ -294,4 +295,69 @@ TEST(Validator, ReconstructionSkippedWhenNoTrades) {
     // A symbol's first bar has no constituent trades — reconstruction is skipped
     // even though make_bar's volume/count don't correspond to any trades.
     EXPECT_TRUE(v.check(make_bar("ZZZ", 1, 1000)).ok());
+}
+
+// ---- Quote invariants ------------------------------------------------------
+
+namespace {
+
+WireQuote make_quote(const char* sym, std::uint64_t seq, std::uint64_t ts,
+                     double bid = 100.0, double ask = 100.5,
+                     std::uint64_t bid_size = 5, std::uint64_t ask_size = 5) {
+    WireQuote q{};
+    std::strncpy(q.symbol, sym, sizeof(q.symbol));
+    q.seq          = seq;
+    q.ts_ns        = ts;
+    q.bid_price    = bid;
+    q.ask_price    = ask;
+    q.bid_size     = bid_size;
+    q.ask_size     = ask_size;
+    q.bid_exchange = 'V';
+    q.ask_exchange = 'V';
+    q.tape         = 'C';
+    return q;
+}
+
+}  // namespace
+
+TEST(Validator, CleanQuotePasses) {
+    Validator v;
+    EXPECT_TRUE(v.check(make_quote("AAPL", 1, 1000)).ok());
+}
+
+TEST(Validator, QuoteCrossed) {
+    Validator v;
+    // bid above ask — crossed book.
+    auto r = v.check(make_quote("AAPL", 1, 1000, /*bid=*/101.0, /*ask=*/100.0));
+    EXPECT_TRUE(r.has(v::kQuoteCrossed));
+    EXPECT_FALSE(r.has(v::kQuoteLocked));
+}
+
+TEST(Validator, QuoteLocked) {
+    Validator v;
+    auto r = v.check(make_quote("AAPL", 1, 1000, /*bid=*/100.0, /*ask=*/100.0));
+    EXPECT_TRUE(r.has(v::kQuoteLocked));
+    EXPECT_FALSE(r.has(v::kQuoteCrossed));
+}
+
+TEST(Validator, QuoteNonPositive) {
+    Validator v;
+    auto r = v.check(make_quote("AAPL", 1, 1000, /*bid=*/0.0, /*ask=*/100.5));
+    EXPECT_TRUE(r.has(v::kQuoteNonPositive));
+}
+
+TEST(Validator, QuoteZeroSize) {
+    Validator v;
+    auto r = v.check(make_quote("AAPL", 1, 1000, 100.0, 100.5,
+                                /*bid_size=*/0, /*ask_size=*/5));
+    EXPECT_TRUE(r.has(v::kQuoteZeroSize));
+}
+
+TEST(Validator, QuotesShareSymbolSequencing) {
+    Validator v;
+    EXPECT_TRUE(v.check(make_trade("AAPL", 1, 1000)).ok());
+    // A quote on the same symbol continues the seq stream; a jump shows a gap.
+    auto r = v.check(make_quote("AAPL", 5, 2000));
+    EXPECT_TRUE(r.has(v::kSequenceGap));
+    EXPECT_EQ(r.gap, 3U);
 }

@@ -45,8 +45,24 @@ struct WireBar {
     std::uint64_t trade_count;
 };
 
+struct WireQuote {
+    char          symbol[kSymbolLen];
+    std::uint64_t ts_ns;               // exchange timestamp, ns since epoch
+    std::uint64_t seq;                 // monotonic per-feed sequence number
+    double        bid_price;
+    double        ask_price;
+    std::uint64_t bid_size;
+    std::uint64_t ask_size;
+    char          bid_exchange;        // venue posting the bid
+    char          ask_exchange;        // venue posting the ask
+    char          tape;
+    char          _pad[5];             // pad WireQuote out to a full cache line
+};
+
 static_assert(std::is_trivially_copyable_v<WireTrade>);
 static_assert(std::is_trivially_copyable_v<WireBar>);
+static_assert(std::is_trivially_copyable_v<WireQuote>);
 static_assert(sizeof(WireTrade) == 64, "WireTrade should stay one cache line");
+static_assert(sizeof(WireQuote) == 64, "WireQuote should stay one cache line");
 
 }  // namespace ohlcv::model

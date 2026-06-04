@@ -88,6 +88,7 @@ int main(int argc, char** argv) {
     // an outlier. Also collect the violation breakdown once.
     std::uint64_t bad_trades = 0, bad_bars = 0, seq_gaps = 0, ts_regress = 0;
     std::uint64_t recon_vol = 0, recon_cnt = 0, recon_vwap = 0, recon_ohlc = 0;
+    std::uint64_t q_crossed = 0, q_locked = 0, q_nonpos = 0, q_zerosize = 0;
     {
         ohlcv::validate::Validator v;
         for (std::uint64_t i = 0; i < count; ++i) {
@@ -99,7 +100,7 @@ int main(int argc, char** argv) {
                     ++bad_trades;
                 if (r.has(ohlcv::validate::kSequenceGap)) ++seq_gaps;
                 if (r.has(ohlcv::validate::kTimestampRegression)) ++ts_regress;
-            } else {
+            } else if (rec.type == static_cast<std::uint8_t>(RecordType::Bar)) {
                 auto r = v.check(rec.body.bar);
                 if (r.flags & (ohlcv::validate::kBarLowAboveHigh |
                                ohlcv::validate::kBarOpenOutOfRange |
@@ -114,6 +115,14 @@ int main(int argc, char** argv) {
                 if (r.has(ohlcv::validate::kBarTradeCountReconstructMismatch)) ++recon_cnt;
                 if (r.has(ohlcv::validate::kBarVwapReconstructMismatch)) ++recon_vwap;
                 if (r.has(ohlcv::validate::kBarOhlcReconstructMismatch)) ++recon_ohlc;
+            } else {
+                auto r = v.check(rec.body.quote);
+                if (r.has(ohlcv::validate::kQuoteCrossed)) ++q_crossed;
+                if (r.has(ohlcv::validate::kQuoteLocked)) ++q_locked;
+                if (r.has(ohlcv::validate::kQuoteNonPositive)) ++q_nonpos;
+                if (r.has(ohlcv::validate::kQuoteZeroSize)) ++q_zerosize;
+                if (r.has(ohlcv::validate::kSequenceGap)) ++seq_gaps;
+                if (r.has(ohlcv::validate::kTimestampRegression)) ++ts_regress;
             }
         }
     }
@@ -132,8 +141,10 @@ int main(int argc, char** argv) {
             const WireRecord& rec = records[i];
             if (rec.type == static_cast<std::uint8_t>(RecordType::Trade)) {
                 checksum += v.check(rec.body.trade).flags;
-            } else {
+            } else if (rec.type == static_cast<std::uint8_t>(RecordType::Bar)) {
                 checksum += v.check(rec.body.bar).flags;
+            } else {
+                checksum += v.check(rec.body.quote).flags;
             }
         }
         const std::uint64_t t1 = ohlcv::util::now_ns();
@@ -174,6 +185,10 @@ int main(int argc, char** argv) {
     std::printf("  recon count mismatch   : %llu\n", (unsigned long long)recon_cnt);
     std::printf("  recon vwap mismatch    : %llu\n", (unsigned long long)recon_vwap);
     std::printf("  recon ohlc mismatch    : %llu\n", (unsigned long long)recon_ohlc);
+    std::printf("  quote crossed          : %llu\n", (unsigned long long)q_crossed);
+    std::printf("  quote locked           : %llu\n", (unsigned long long)q_locked);
+    std::printf("  quote non-positive     : %llu\n", (unsigned long long)q_nonpos);
+    std::printf("  quote zero-size        : %llu\n", (unsigned long long)q_zerosize);
     std::printf("\n[checksum %llu]\n", (unsigned long long)checksum);
 
     ::munmap(const_cast<std::byte*>(m.base), m.size);

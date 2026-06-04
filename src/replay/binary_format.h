@@ -14,7 +14,7 @@ namespace ohlcv::replay {
 // replay benchmark measures validation cost rather than JSON-parse cost.
 
 inline constexpr std::uint32_t kMagic   = 0x564C484F;  // 'OHLV' little-endian
-inline constexpr std::uint32_t kVersion = 1;
+inline constexpr std::uint32_t kVersion = 2;           // v2 adds quote records
 
 struct FileHeader {
     std::uint32_t magic;
@@ -22,7 +22,7 @@ struct FileHeader {
     std::uint64_t record_count;
 };
 
-enum class RecordType : std::uint8_t { Trade = 0, Bar = 1 };
+enum class RecordType : std::uint8_t { Trade = 0, Bar = 1, Quote = 2 };
 
 struct WireRecord {
     std::uint8_t type;        // RecordType
@@ -30,6 +30,7 @@ struct WireRecord {
     union Body {
         model::WireTrade trade;  // valid iff type == Trade
         model::WireBar   bar;    // valid iff type == Bar
+        model::WireQuote quote;  // valid iff type == Quote
     } body;
 };
 
