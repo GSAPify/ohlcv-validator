@@ -45,8 +45,8 @@ std::vector<std::string> make_symbols(std::size_t count) {
         if (i < kRealSymbols.size()) {
             out.emplace_back(kRealSymbols[i]);
         } else {
-            char buf[ohlcv::model::kSymbolLen + 1];
-            std::snprintf(buf, sizeof(buf), "S%05zu", i);  // <= 8 chars
+            char buf[16];  // sized so GCC -Wformat-truncation can't fire
+            std::snprintf(buf, sizeof(buf), "S%05u", static_cast<unsigned>(i));
             out.emplace_back(buf);
         }
     }
