@@ -71,6 +71,23 @@ void Validator::check_sequencing(Slot& s, std::uint64_t ts, std::uint64_t seq,
     s.last_seq = seq;
 }
 
+void Validator::check_price_band(Slot& s, double price, Result& out) noexcept {
+    if (!s.ref_init) {
+        // Warmup: establish the reference with the first valid price; never flag.
+        s.ref_price = price;
+        s.ref_init  = true;
+        return;
+    }
+    if (std::fabs(price - s.ref_price) > kPriceBandFrac * s.ref_price) {
+        // Outlier: flag but do not update the reference so a single bad tick
+        // cannot shift the band for every subsequent record.
+        out.flags |= kPriceBandBreach;
+    } else {
+        // In-band: update the EWMA to track genuine price drift.
+        s.ref_price = kRefEwmaAlpha * price + (1.0 - kRefEwmaAlpha) * s.ref_price;
+    }
+}
+
 void Validator::accumulate(Slot& s, double price, std::uint64_t size) noexcept {
     if (!s.has_trades) {
         s.acc_open = s.acc_high = s.acc_low = s.acc_close = price;
@@ -132,6 +149,9 @@ Result Validator::check(const model::WireTrade& t) noexcept {
     // deferred; here we filter only on basic validity.)
     if (valid_price && valid_size) {
         accumulate(*s, t.price, t.size);
+        // Price-band check runs after accumulate so the reference is always
+        // built from the same set of valid trades that feed reconstruction.
+        check_price_band(*s, t.price, r);
     }
     return r;
 }
@@ -178,6 +198,17 @@ Result Validator::check(const model::WireQuote& q) noexcept {
     Slot* s = slot_for(q.symbol);
     if (s == nullptr) return r;  // table full — skip stateful checks
     check_sequencing(*s, q.ts_ns, q.seq, r);
+
+    // Quote mid band-check: if a trade reference exists and both sides are
+    // positive, flag when the mid deviates beyond the band. Quotes do NOT
+    // update the reference — only trades establish fair value.
+    if (s->ref_init && q.bid_price > 0.0 && q.ask_price > 0.0) {
+        const double mid = (q.bid_price + q.ask_price) * 0.5;
+        if (std::fabs(mid - s->ref_price) > kPriceBandFrac * s->ref_price) {
+            r.flags |= kPriceBandBreach;
+        }
+    }
+
     return r;  // quotes don't feed bar reconstruction
 }
 

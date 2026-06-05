@@ -36,6 +36,10 @@ enum Violation : std::uint32_t {
     kQuoteLocked           = 1u << 15,  // bid == ask — the book is locked
     kQuoteNonPositive      = 1u << 16,  // bid or ask price <= 0
     kQuoteZeroSize         = 1u << 17,  // bid or ask size is 0
+    // Price-band / outlier detection (per-symbol, stateful): the per-trade
+    // EWMA reference tracks the symbol's fair-value estimate; a trade or quote
+    // mid that deviates by more than kPriceBandFrac is an outlier.
+    kPriceBandBreach       = 1u << 18,  // price more than 5% from EWMA reference
 };
 
 // Relative tolerance for reconstructed *price* comparisons (vwap and OHLC). Real
@@ -43,6 +47,13 @@ enum Violation : std::uint32_t {
 // would false-positive on every live bar. Volume and trade_count are integers and
 // are compared exactly.
 inline constexpr double kPriceRelTol = 1e-6;
+
+// Price-band outlier detection parameters. kPriceBandFrac is the maximum
+// fractional deviation from the EWMA reference before a record is flagged;
+// kRefEwmaAlpha controls how quickly the reference tracks the true price.
+// Outliers do NOT update the reference — one bad tick must not poison it.
+inline constexpr double kPriceBandFrac  = 0.05;
+inline constexpr double kRefEwmaAlpha   = 0.2;
 
 struct Result {
     std::uint32_t flags = kNone;
@@ -74,6 +85,12 @@ private:
         std::uint64_t last_seq = 0;
         bool          seen     = false;
 
+        // Price-band EWMA reference. Initialised on the first valid trade; only
+        // valid (non-outlier) trades move it. Quote mid checks read but never
+        // write this field so quotes cannot drift the reference.
+        double        ref_price  = 0.0;
+        bool          ref_init   = false;
+
         // Trade accumulator for bar reconstruction: the aggregate of the VALID
         // trades seen for this symbol since its last bar. Reset when a bar
         // reconciles against it.
@@ -95,6 +112,12 @@ private:
     // slot so the hot path does a single table lookup per record.
     static void check_sequencing(Slot& s, std::uint64_t ts, std::uint64_t seq,
                                  Result& out) noexcept;
+
+    // Price-band check: flags kPriceBandBreach if price deviates from the slot's
+    // EWMA reference by more than kPriceBandFrac. On the first call (warmup) the
+    // reference is initialised and no flag is set. An outlier does NOT update the
+    // reference — subsequent normal trades will still pass.
+    static void check_price_band(Slot& s, double price, Result& out) noexcept;
 
     // Fold one valid trade into the slot's accumulator.
     static void accumulate(Slot& s, double price, std::uint64_t size) noexcept;

@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
     std::uint64_t bad_trades = 0, bad_bars = 0, seq_gaps = 0, ts_regress = 0;
     std::uint64_t recon_vol = 0, recon_cnt = 0, recon_vwap = 0, recon_ohlc = 0;
     std::uint64_t q_crossed = 0, q_locked = 0, q_nonpos = 0, q_zerosize = 0;
+    std::uint64_t band_breach = 0;
     {
         ohlcv::validate::Validator v;
         for (std::uint64_t i = 0; i < count; ++i) {
@@ -100,6 +101,7 @@ int main(int argc, char** argv) {
                     ++bad_trades;
                 if (r.has(ohlcv::validate::kSequenceGap)) ++seq_gaps;
                 if (r.has(ohlcv::validate::kTimestampRegression)) ++ts_regress;
+                if (r.has(ohlcv::validate::kPriceBandBreach)) ++band_breach;
             } else if (rec.type == static_cast<std::uint8_t>(RecordType::Bar)) {
                 auto r = v.check(rec.body.bar);
                 if (r.flags & (ohlcv::validate::kBarLowAboveHigh |
@@ -123,6 +125,7 @@ int main(int argc, char** argv) {
                 if (r.has(ohlcv::validate::kQuoteZeroSize)) ++q_zerosize;
                 if (r.has(ohlcv::validate::kSequenceGap)) ++seq_gaps;
                 if (r.has(ohlcv::validate::kTimestampRegression)) ++ts_regress;
+                if (r.has(ohlcv::validate::kPriceBandBreach)) ++band_breach;
             }
         }
     }
@@ -189,6 +192,7 @@ int main(int argc, char** argv) {
     std::printf("  quote locked           : %llu\n", (unsigned long long)q_locked);
     std::printf("  quote non-positive     : %llu\n", (unsigned long long)q_nonpos);
     std::printf("  quote zero-size        : %llu\n", (unsigned long long)q_zerosize);
+    std::printf("  price-band breach      : %llu\n", (unsigned long long)band_breach);
     std::printf("\n[checksum %llu]\n", (unsigned long long)checksum);
 
     ::munmap(const_cast<std::byte*>(m.base), m.size);
