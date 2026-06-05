@@ -18,7 +18,7 @@ Most "market data validators" are FastAPI services querying daily bars from Poly
 The decisions matter more than the feature list:
 
 - **Binary over JSON for the measured path.** A live JSON websocket (Alpaca IEX) is included as a "runs on real data" demo — but timing socket-to-validation on JSON measures the parser and the network, not market-data handling. Real venues ship fixed-layout binary messages (ITCH/SBE-style), so the benchmark reads a fixed-stride record straight out of an `mmap`'d file by cast: no parse, no copy, no allocation.
-- **Throughput, framed honestly.** ~167 M records/sec on one core, steady from 1M to 10¹⁰ validations. It is deliberately *not* reported as a latency distribution: per-record cost is below the ~41 ns Apple-Silicon clock floor, so p50/p99 there would be timer noise. A real per-record histogram needs an x86 host with `rdtscp`.
+- **Throughput, framed honestly.** ~167 M records/sec on one core, steady from 1M to 10¹⁰ validations. It is deliberately *not* reported as a latency distribution: per-record cost is below the ~41 ns Apple-Silicon clock floor, so p50/p99 there would be timer noise. The latency distribution itself is measured on x86 with `rdtscp` (see Benchmark) — p50 20 ns / p99 30 ns on a Ryzen 9 7900X3D.
 - **Claims are proven, not asserted.** "Zero allocations on the hot path" is a test (`tests/test_alloc_guard.cpp` overrides global `operator new` and fails on any allocation), not a sentence in a README.
 - **Reconstruction with tolerance, not `==`.** The cross-record check — do a bar's constituent trades rebuild its volume, VWAP, and OHLC? — uses a relative tolerance, because real feeds round prices to a tick and exact equality would false-positive on every live bar.
 
@@ -50,11 +50,37 @@ mean:        ~6 ns / record   (allocation-free hot path)
 moved this from the ~2 ns/record of the bounds-only validator; still allocation-
 free, the work is just real now.)
 
-This is a **throughput** number, not a latency distribution. Per-record cost
-(~6ns) sits below the M-series clock resolution (~41ns), so timing is batched
-per-pass and divided — you cannot measure a per-record tail on this hardware.
-A real latency histogram (p50/p99/p999) needs an x86 host with an invariant TSC
-and `rdtscp`; that's the eventual measurement host (see platform note below).
+That M-series figure is **throughput** (batched per-pass) — per-record cost is
+below the ~41 ns Apple-Silicon clock floor, so a per-record *tail* can't be
+measured there. For that, the bench runs on x86.
+
+### Latency distribution — x86 (`rdtscp`)
+
+Ryzen 9 7900X3D (4.4 GHz invariant TSC), single core pinned with `taskset`, each
+decode+validate timed with one `rdtscp` pair (timer overhead measured and
+subtracted), 5M samples (`replay_bench_rdtsc`):
+
+```
+p50  20 ns   ·   p99  30 ns   ·   p99.9  50 ns   ·   p99.99 ~200 ns   ·   mean ~17 ns
+```
+
+Stable to p99.9 across runs. This is per-event, `lfence`-serialized latency (the
+point-in-time metric) — higher than the amortized throughput above because
+serialization defeats pipelining. The far tail (max tens of µs) is OS preemption:
+WSL2 isn't an isolated `isolcpus`/`nohz_full` core, so rare scheduler stalls show
+up; bare metal would erase them.
+
+### Multicore scaling — x86, 24 threads
+
+Shard-by-symbol across the 7900X3D's 24 threads (`replay_bench_mt`):
+
+```
+ 1c 115 M/s   2c 1.8×   4c 3.0×   8c 5.1×   10c 7.4×   24c ~9× → ~1.0 B records/sec
+```
+
+Near-linear to ~10 cores, then memory bandwidth and the chip's dual-CCD / 3D
+V-cache asymmetry taper it (a reproducible dip at 14 threads, as work spills
+across both chiplets). Peak ≈ **1.0 billion records/sec**, single machine.
 
 The hot path is allocation-free, and that's *proven*, not asserted:
 `tests/test_alloc_guard.cpp` overrides global `operator new` and requires zero
@@ -89,4 +115,4 @@ See [`docs/runbook.md`](docs/runbook.md) for all build/run/test commands and an 
 
 ## Platform notes
 
-Developed on Apple Silicon (M-series) where the system cycle counter is virtualized at 24 MHz. Real latency benchmarks for the resume will eventually run on a Linux x86_64 host with an invariant TSC; the Mac is the development environment, not the measurement environment.
+Developed on Apple Silicon (M-series), where the user-space cycle counter is virtualized at 24 MHz (~41 ns) — fine for throughput, too coarse for a per-record latency tail. The latency distribution is therefore measured on a Linux x86_64 host (Ryzen 9 7900X3D, WSL2) with an invariant TSC read via `rdtscp`. The Mac is the development environment; the x86 box is the measurement environment.

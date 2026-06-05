@@ -100,6 +100,23 @@ LLVM=$(brew --prefix llvm); SJ=$(brew --prefix simdjson)
 /tmp/fuzz_parser -max_total_time=30
 ```
 
+## x86 latency + scaling (on a Linux x86 host)
+
+The latency distribution needs an invariant TSC + user-readable cycle counter
+(rdtscp) — not available on Apple Silicon. On an x86 Linux box (here: a Ryzen 9
+7900X3D under WSL2), only a compiler is needed (the validator/bench/generator are
+pure C++ — no simdjson/Boost/spdlog):
+
+```sh
+g++ -O3 -march=native -std=c++20 -Isrc src/bin/gen_dataset.cpp -o gen_dataset
+g++ -O3 -march=native -std=c++20 -Isrc src/bin/replay_bench_rdtsc.cpp src/validate/validator.cpp -o rdtsc_bench
+g++ -O3 -march=native -std=c++20 -pthread -Isrc src/bin/replay_bench_mt.cpp src/validate/validator.cpp -o bench_mt
+
+./gen_dataset data/replay.bin 1000000 64
+taskset -c 2 ./rdtsc_bench data/replay.bin 5   # per-record p50/p99/p999, pinned core
+./bench_mt data/replay.bin 20                  # shard-by-symbol scaling sweep
+```
+
 ## Install / update deps (macOS)
 
 ```sh
@@ -112,6 +129,14 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 ## Activity log
 
 Date + one line of what changed and why. Newest first.
+
+- **2026-06-06** — bench: per-record latency histogram via `rdtscp`
+  (`util/tsc_timer.h`, `replay_bench_rdtsc`). Finally measured the README's
+  day-one promise on x86 (Ryzen 9 7900X3D, WSL2, pinned core): **p50 20 ns /
+  p99 30 ns / p99.9 50 ns**, mean ~17 ns, stable across runs. Clean 24-thread
+  scaling too (~1.0 B rec/s peak; reproducible dip at 14 threads = dual-CCD
+  spill). README/platform-notes updated to real numbers; fixed a GCC
+  `-Wformat-truncation` nit in `gen_dataset`.
 
 - **2026-06-05** — harden: `-DSANITIZER="address;undefined"` / `=thread` build
   option + a libFuzzer parser harness (`tests/fuzz_parser.cpp`). Verified clean:
