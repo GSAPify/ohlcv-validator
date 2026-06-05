@@ -25,3 +25,26 @@ jobs:
 
       - name: Run binary
         run: ./build/ohlcv_validator
+
+  sanitizers:
+    runs-on: macos-latest
+    # gtest and simdjson come from brew un-instrumented; mixing them with
+    # ASan-built code trips a false-positive container-overflow (gtest_discover_tests
+    # runs the binary at build time). Disable just that check — every other ASan
+    # check stays on.
+    env:
+      ASAN_OPTIONS: detect_container_overflow=0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: brew install cmake ninja boost simdjson spdlog nlohmann-json googletest
+
+      - name: Configure (ASan + UBSan)
+        run: cmake -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Release -DSANITIZER="address;undefined"
+
+      - name: Build
+        run: cmake --build build-san
+
+      - name: Test under ASan + UBSan
+        run: UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 ctest --test-dir build-san --output-on-failure

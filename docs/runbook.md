@@ -68,6 +68,38 @@ Single test by name:
 rm -rf build build-debug
 ```
 
+## Sanitizers & fuzzing
+
+The default build is untouched; sanitizers go in their own build dir.
+
+ASan + UBSan over the full test suite:
+
+```sh
+cmake -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Release -DSANITIZER="address;undefined"
+cmake --build build-san
+UBSAN_OPTIONS=halt_on_error=1 ctest --test-dir build-san --output-on-failure
+```
+
+ThreadSanitizer on the multicore path (proves the shard-by-symbol design is
+race-free; `address` and `thread` are mutually exclusive):
+
+```sh
+cmake -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Release -DSANITIZER=thread
+cmake --build build-tsan --target gen_dataset replay_bench_mt
+./build-tsan/gen_dataset /tmp/h.bin 500000 64 && ./build-tsan/replay_bench_mt /tmp/h.bin 5
+```
+
+libFuzzer on the JSON parser. Apple clang lacks the fuzzer runtime, so use
+Homebrew LLVM (`brew install llvm`):
+
+```sh
+LLVM=$(brew --prefix llvm); SJ=$(brew --prefix simdjson)
+"$LLVM/bin/clang++" -std=c++20 -g -O1 -fsanitize=fuzzer,address,undefined \
+  -I src -I "$SJ/include" tests/fuzz_parser.cpp src/ingest/parser.cpp \
+  "$SJ/lib/libsimdjson.dylib" -o /tmp/fuzz_parser
+/tmp/fuzz_parser -max_total_time=30
+```
+
 ## Install / update deps (macOS)
 
 ```sh
@@ -81,6 +113,11 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-05** — harden: `-DSANITIZER="address;undefined"` / `=thread` build
+  option + a libFuzzer parser harness (`tests/fuzz_parser.cpp`). Verified clean:
+  ASan+UBSan over the full suite, TSan over the multicore bench (shard-by-symbol
+  is race-free), and 1.59M fuzzer executions on the parser with zero crashes.
+  CI gains an ASan+UBSan job. Default Release build unchanged.
 - **2026-06-05** — validate: quote validation. New `WireQuote` wire type (one
   cache line) + `RecordType::Quote` (binary format v2). Validator gains
   crossed (bid > ask), locked (bid == ask), non-positive, and zero-size checks;

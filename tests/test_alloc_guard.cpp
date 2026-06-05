@@ -8,12 +8,24 @@
 
 #include "validate/validator.h"
 
+// This test overrides global operator new, which is fundamentally incompatible
+// with AddressSanitizer (ASan owns allocation, and the override desyncs its
+// container annotations → spurious container-overflow). Under ASan we skip it;
+// ASan tracks allocations itself, and the default build still proves zero-alloc.
+#if defined(__SANITIZE_ADDRESS__) || \
+    (defined(__has_feature) && __has_feature(address_sanitizer))
+#  define OHLCV_ASAN 1
+#else
+#  define OHLCV_ASAN 0
+#endif
+
 // Proves the headline claim instead of asserting it: counts every global heap
 // allocation while a stream runs through the validator, and requires the count
 // to be exactly zero. operator new is overridden process-wide for this test
 // binary but only tallies while g_counting is set, so it doesn't perturb other
 // tests (or gtest's own allocations).
 
+#if !OHLCV_ASAN
 namespace {
 std::atomic<std::size_t> g_alloc_count{0};
 std::atomic<bool>        g_counting{false};
@@ -29,12 +41,17 @@ void* operator new(std::size_t n) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
+#endif  // !OHLCV_ASAN
 
 using ohlcv::model::WireBar;
 using ohlcv::model::WireTrade;
 using ohlcv::validate::Validator;
 
 TEST(AllocGuard, HotPathDoesNotAllocate) {
+#if OHLCV_ASAN
+    GTEST_SKIP() << "operator new override conflicts with ASan's allocator; "
+                    "zero-alloc is verified by the default (non-sanitizer) build";
+#else
     // Build everything the loop touches BEFORE counting: the validator (its
     // per-symbol table is an in-place std::array, no heap) and the records.
     Validator v;
@@ -84,4 +101,5 @@ TEST(AllocGuard, HotPathDoesNotAllocate) {
 
     EXPECT_EQ(g_alloc_count.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(sink, 0U) << "clean stream should produce no violations";
+#endif  // OHLCV_ASAN
 }
