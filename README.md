@@ -63,8 +63,11 @@ heap allocations through a 100k-record validate stream.
 The validator catches non-positive prices, inverted OHLC bands, out-of-band
 VWAP, volume/trade-count inconsistency, per-symbol timestamp regressions,
 dropped-message sequence gaps, bars whose constituent trades fail to reconstruct
-their volume/count/VWAP/OHLC (the cross-record check), and — on quotes — crossed
-(bid > ask) and locked (bid == ask) markets plus non-positive or zero-size sides.
+their volume/count/VWAP/OHLC (the cross-record check), quote anomalies
+(crossed/locked book, non-positive or zero-size sides), and per-symbol
+price-band outliers: trades or quote mids that deviate more than 5% from a
+per-symbol EWMA reference are flagged; outliers are excluded from the EWMA so
+one bad tick cannot shift the band for subsequent records.
 
 ## Build
 

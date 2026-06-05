@@ -81,6 +81,15 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-05** — validate: per-symbol price-band / outlier detection. New
+  `kPriceBandBreach` violation flag (`1u<<18`); per-`Slot` EWMA reference
+  (`ref_price`, `ref_init`) tracks fair value. `check_price_band` flags
+  deviations > 5% from the reference on trades; quote mid checked read-only
+  (quotes never update the reference). Outlier rejected from EWMA so one bad
+  tick cannot shift the band. `gen_dataset` gains `kPriceSpike` defect
+  (×1.6 trade, ~1% of windows). `replay_bench` tallies and prints band breaches
+  across both trade and quote branches. 6 new tests (63 total).
+
 - **2026-06-05** — validate: quote validation. New `WireQuote` wire type (one
   cache line) + `RecordType::Quote` (binary format v2). Validator gains
   crossed (bid > ask), locked (bid == ask), non-positive, and zero-size checks;
