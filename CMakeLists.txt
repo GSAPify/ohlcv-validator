@@ -24,6 +24,18 @@ add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror)
 add_compile_options($<$<CONFIG:Release>:-O3>)
 add_compile_options($<$<CONFIG:Release>:-march=native>)
 
+# Optional sanitizer build, e.g. -DSANITIZER="address;undefined" or -DSANITIZER=thread.
+# Leaves the default (unset) build completely untouched. address and thread are
+# mutually exclusive; combine address with undefined for the fullest memory/UB run.
+set(SANITIZER "" CACHE STRING "Sanitizers to build with (address;undefined;thread)")
+if(SANITIZER)
+    foreach(san IN LISTS SANITIZER)
+        add_compile_options(-fsanitize=${san})
+        add_link_options(-fsanitize=${san})
+    endforeach()
+    add_compile_options(-fno-omit-frame-pointer -g)
+endif()
+
 # Homebrew prefix discovery so find_package picks up keg-only and headers-only libs.
 if(APPLE)
     execute_process(
