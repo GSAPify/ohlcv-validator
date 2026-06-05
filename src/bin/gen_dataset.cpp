@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
     enum Defect {
         kClean, kCorruptTrade, kSeqGap, kTsRegress,
         kReconVolume, kReconCount, kReconVwap, kReconOhlc, kBand,
-        kQuoteCrossed, kQuoteLocked
+        kQuoteCrossed, kQuoteLocked, kPriceSpike
     };
 
     // Each window emits a run of trades for one symbol, then the bar that closes
@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
             case 7: defect = kBand;         break;
             case 8: defect = kQuoteCrossed; break;
             case 9: defect = kQuoteLocked;  break;
+            case 10: defect = kPriceSpike;  break;
             default: break;
         }
 
@@ -158,6 +159,11 @@ int main(int argc, char** argv) {
                     t.seq   = seq[s];
                 } else if (defect == kTsRegress) {
                     t.ts_ns -= 5'000'000ULL;
+                } else if (defect == kPriceSpike) {
+                    // 60% above the running price — well beyond the 5% band.
+                    // The price stays positive so this trade feeds both the
+                    // reconstruction aggregate and the price-band check.
+                    t.price = px[s] * 1.6;
                 }
             }
 

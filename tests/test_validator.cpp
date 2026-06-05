@@ -361,3 +361,72 @@ TEST(Validator, QuotesShareSymbolSequencing) {
     EXPECT_TRUE(r.has(v::kSequenceGap));
     EXPECT_EQ(r.gap, 3U);
 }
+
+// ---- Price-band / outlier detection ----------------------------------------
+
+// (a) Clean stream drifting <5% per step must never trigger kPriceBandBreach.
+TEST(Validator, PriceBandCleanDriftPasses) {
+    Validator v;
+    // Each trade moves ~1% from the previous — well inside the 5% band. Over 50
+    // trades the EWMA tracks the drift, so no breach should ever fire.
+    double price = 100.0;
+    for (std::uint64_t i = 1; i <= 50; ++i) {
+        price *= 1.01;  // +1% per step
+        auto r = v.check(make_trade("AAPL", i, i * 1000, price));
+        EXPECT_FALSE(r.has(v::kPriceBandBreach)) << "breach at step " << i;
+    }
+}
+
+// (b) After warmup, a +60% trade must flag kPriceBandBreach.
+TEST(Validator, PriceBandSpikeIsDetected) {
+    Validator v;
+    // Warmup: two in-band trades to establish the reference.
+    EXPECT_TRUE(v.check(make_trade("AAPL", 1, 1000, 100.0)).ok());
+    EXPECT_TRUE(v.check(make_trade("AAPL", 2, 2000, 101.0)).ok());
+    // Spike: 60% above the reference must breach.
+    auto r = v.check(make_trade("AAPL", 3, 3000, 160.0));
+    EXPECT_TRUE(r.has(v::kPriceBandBreach));
+}
+
+// (c) An outlier must NOT update the reference — the trade immediately after
+//     must pass without being flagged.
+TEST(Validator, PriceBandOutlierDoesNotPoisonReference) {
+    Validator v;
+    EXPECT_TRUE(v.check(make_trade("AAPL", 1, 1000, 100.0)).ok());  // warmup
+    (void)v.check(make_trade("AAPL", 2, 2000, 160.0));               // spike
+    // If the reference had been poisoned to 160, this 100 would be flagged.
+    auto r = v.check(make_trade("AAPL", 3, 3000, 100.0));
+    EXPECT_FALSE(r.has(v::kPriceBandBreach));
+}
+
+// (d) The very first trade for a symbol (warmup) must never flag.
+TEST(Validator, PriceBandFirstTradeNeverFlags) {
+    Validator v;
+    // No prior trades; even an extreme price should only initialise the reference.
+    auto r = v.check(make_trade("AAPL", 1, 1000, 9999.0));
+    EXPECT_FALSE(r.has(v::kPriceBandBreach));
+}
+
+// (e) Price-band state is per-symbol — AAPL's spike must not affect MSFT.
+TEST(Validator, PriceBandIsPerSymbol) {
+    Validator v;
+    EXPECT_TRUE(v.check(make_trade("AAPL", 1, 1000, 100.0)).ok());   // AAPL warmup
+    EXPECT_TRUE(v.check(make_trade("MSFT", 1, 1000, 200.0)).ok());   // MSFT warmup
+    // Spike on AAPL only.
+    (void)v.check(make_trade("AAPL", 2, 2000, 160.0));
+    // MSFT must be clean regardless of what happened on AAPL.
+    auto r = v.check(make_trade("MSFT", 2, 2000, 202.0));
+    EXPECT_FALSE(r.has(v::kPriceBandBreach));
+}
+
+// (f) A quote whose mid is far outside the band (after a trade sets the
+//     reference) must flag kPriceBandBreach.
+TEST(Validator, PriceBandQuoteMidOutOfBandFlags) {
+    Validator v;
+    // Establish a reference at ~100.
+    EXPECT_TRUE(v.check(make_trade("AAPL", 1, 1000, 100.0)).ok());
+    // Quote with bid=155, ask=165 → mid=160, which is +60% from the reference.
+    auto r = v.check(make_quote("AAPL", 2, 2000,
+                                /*bid=*/155.0, /*ask=*/165.0));
+    EXPECT_TRUE(r.has(v::kPriceBandBreach));
+}
