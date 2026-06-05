@@ -111,5 +111,13 @@ add_executable(replay_bench_mt
 target_include_directories(replay_bench_mt PRIVATE src)
 target_link_libraries(replay_bench_mt PRIVATE Threads::Threads)
 
+# Per-record latency histogram via rdtscp. Builds on any arch (non-x86 uses a
+# coarse fallback timer); only meaningful on an x86 host with an invariant TSC.
+add_executable(replay_bench_rdtsc
+    src/bin/replay_bench_rdtsc.cpp
+    src/validate/validator.cpp
+)
+target_include_directories(replay_bench_rdtsc PRIVATE src)
+
 enable_testing()
 add_subdirectory(tests)
