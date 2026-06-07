@@ -89,6 +89,15 @@ cmake --build build-tsan --target gen_dataset replay_bench_mt
 ./build-tsan/gen_dataset /tmp/h.bin 500000 64 && ./build-tsan/replay_bench_mt /tmp/h.bin 5
 ```
 
+ThreadSanitizer on the SPSC ring (proves the lock-free ring's acquire/release
+ordering is correct — the threaded strict-FIFO test must run *under* TSan, so
+build and run `unit_tests` in the sanitizer build dir, not just the benches):
+
+```sh
+cmake --build build-tsan --target unit_tests
+./build-tsan/tests/unit_tests --gtest_filter='SpscRing.*'
+```
+
 libFuzzer on the JSON parser. Apple clang lacks the fuzzer runtime, so use
 Homebrew LLVM (`brew install llvm`):
 
@@ -115,6 +124,11 @@ g++ -O3 -march=native -std=c++20 -pthread -Isrc src/bin/replay_bench_mt.cpp src/
 ./gen_dataset data/replay.bin 1000000 64
 taskset -c 2 ./rdtsc_bench data/replay.bin 5   # per-record p50/p99/p999, pinned core
 ./bench_mt data/replay.bin 20                  # shard-by-symbol scaling sweep
+
+# Producer/consumer pipeline over the SPSC ring. Args: passes, producer core,
+# consumer core — pick two cores on the same CCD for a clean number.
+g++ -O3 -march=native -std=c++20 -pthread -Isrc src/bin/replay_bench_spsc.cpp src/validate/validator.cpp -o spsc_bench
+./spsc_bench data/replay.bin 5 2 4             # ring throughput + handoff residency
 ```
 
 ## Install / update deps (macOS)
@@ -130,6 +144,17 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-07** — concurrent: lock-free SPSC ring (`concurrent/spsc_ring.h`) +
+  a producer/consumer pipeline bench (`replay_bench_spsc`). Threaded strict-FIFO
+  test passes under TSan → acquire/release ordering proven race-free. Ring-bound
+  throughput on the 7900X3D (two cores, one CCD): ~34 M ops/s for 64B records,
+  ~180 M ops/s for 8B words. Surprise finding: **packing the two cursors onto one
+  cache line is ~22–26% *faster* than padding them apart** — this naive ring reads
+  both cursors every iteration (true sharing), so one line beats two. Caching the
+  far cursor (Vyukov/Folly style) and re-measuring whether that flips is the next
+  PR. Realistic (validate-bound) pipeline: ring sits ~95% full, so the handoff
+  number is queue residency (~50 µs), not sync cost — occupancy is printed to make
+  that explicit.
 - **2026-06-06** — bench: per-record latency histogram via `rdtscp`
   (`util/tsc_timer.h`, `replay_bench_rdtsc`). Finally measured the README's
   day-one promise on x86 (Ryzen 9 7900X3D, WSL2, pinned core): **p50 20 ns /

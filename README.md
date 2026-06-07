@@ -34,6 +34,10 @@ Alpaca IEX ──ws──► parse ──► Trade/Bar          ← live demo (J
 binary file ──mmap──► WireRecord ──► Validator ──► throughput
   (fixed-layout POD,    no parse,     zero alloc      ~167M rec/s
    ITCH/SBE-shaped)     no copy       after ctor)     ← the measured path
+
+binary file ──► [decode thread] ──push──► SPSC ring ──pop──► [validate thread]
+                                          (lock-free,                  ← pipeline
+                                           cache-line aware)             (x86)
 ```
 
 ## Benchmark
@@ -81,6 +85,47 @@ Shard-by-symbol across the 7900X3D's 24 threads (`replay_bench_mt`):
 Near-linear to ~10 cores, then memory bandwidth and the chip's dual-CCD / 3D
 V-cache asymmetry taper it (a reproducible dip at 14 threads, as work spills
 across both chiplets). Peak ≈ **1.0 billion records/sec**, single machine.
+
+### Pipeline — lock-free SPSC ring (x86)
+
+A single-producer/single-consumer ring (`src/concurrent/spsc_ring.h`) decouples a
+decode thread from a validate thread — the structure every real feed handler has.
+At IEX volume one thread copes fine; this isn't load-bearing. It's here to make
+the thread-to-thread handoff measurable, and to settle a cache-line question with
+data instead of lore.
+
+Correctness first: the threaded 1M-item strict-FIFO test
+(`tests/test_spsc_ring.cpp`) passes under ThreadSanitizer (`-DSANITIZER=thread`),
+so the acquire/release pairing is *proven* race-free — no drops, dups, or
+reordering — not just argued.
+
+Ring-bound throughput (the consumer does no work, so the cursors are the
+bottleneck), median of 5, producer and consumer pinned to two cores of one CCD:
+
+```
+payload      cursors on separate lines     cursors packed on one line
+64B record        34 M ops/s                    44 M ops/s   (packed +22%)
+8B word          180 M ops/s                   243 M ops/s   (packed +26%)
+```
+
+The surprise: **packing the two cursors onto one cache line is faster** — and the
+textbook rule is to pad them *apart* to avoid false sharing. My read of why this
+ring inverts that (a hypothesis, to be confirmed by the experiment below): it
+re-reads *both* cursors every iteration — the producer checks `head` to see if the
+ring is full, the consumer checks `tail` to see if it's empty — so the cursors are
+*truly* shared, not falsely. On one line a single cross-core transfer carries both
+updates; split across two lines, both lines bounce every item. The "pad your
+cursors" advice assumes the production optimization — each side *caches* the far
+cursor and re-reads it only when its cache says full/empty — which this naive ring
+doesn't have yet. Adding that, and re-measuring whether the padding result flips,
+is the next step.
+
+Realistic pipeline (the consumer validates each record): the producer is a 64-byte
+`mmap` copy, so it outruns the validator and the ring sits ~95% full. End-to-end
+throughput is validate-bound (~19 M rec/s), and the enqueue→dequeue "latency" is
+therefore *queue residency* (ring depth × consume time ≈ 50 µs), not the ring's
+sync cost — the bench prints mean ring occupancy so which regime you're in is
+explicit, never implied.
 
 The hot path is allocation-free, and that's *proven*, not asserted:
 `tests/test_alloc_guard.cpp` overrides global `operator new` and requires zero

@@ -13,8 +13,9 @@
 //   1. RING-BOUND throughput (consumer does no payload work). Both threads
 //      hammer the cursors, so this is where cache-line placement actually
 //      matters. Run with the cursors on separate lines vs packed onto one;
-//      the delta is the cost of false sharing, reported as measured (median of
-//      several runs — WSL scheduling is noisy). No per-item timing in the loop.
+//      the delta is what that placement costs (or saves) — measured, not
+//      assumed; the sign may surprise you, see the README (median of several
+//      runs, WSL scheduling is noisy). No per-item timing in the loop.
 //
 //   2. REALISTIC pipeline (consumer validates each record). The validate is the
 //      bottleneck, so the ring sits nearly full and the producer blocks on it.
@@ -98,9 +99,10 @@ void pin_to_core([[maybe_unused]] int core) noexcept {
 // The consumer only sinks a byte so the pop can't be optimised away; both ends
 // are then bottlenecked on the ring itself, which is what makes the cursor
 // cache-line placement observable. `make(i)` builds the payload, so the same
-// body benchmarks a 64-byte record and an 8-byte word — the comparison that
-// shows cursor padding only matters when the payload doesn't dominate the
-// cross-core line transfer.
+// body benchmarks a 64-byte record and an 8-byte word. (Measured result:
+// packing the cursors wins for both — this naive ring reads BOTH cursors every
+// iteration, so they're truly shared and one line beats two. The cached-cursor
+// variant that tests whether that flips is a follow-up.)
 template <typename RingT, typename Make>
 double ring_throughput_once(std::uint64_t count, std::uint64_t passes,
                             int pcore, int ccore, Make make) {
@@ -227,8 +229,12 @@ int main(int argc, char** argv) {
     std::printf("      8B word      %6.1f M ops/s     %6.1f M ops/s   %+.1f%%\n",
                 u64_pad / 1e6, u64_pak / 1e6,
                 u64_pak > 0.0 ? (u64_pad - u64_pak) / u64_pak * 100.0 : 0.0);
-    std::printf("      → padding pays off only when the payload doesn't "
-                "dominate the cross-core transfer\n");
+    std::printf("      → separating the cursors COSTS throughput here: this "
+                "naive ring reads both\n");
+    std::printf("        every iteration (true sharing), so two lines bounce "
+                "instead of one. Caching\n");
+    std::printf("        the far cursor (Vyukov/Folly style) is the next "
+                "experiment — does it flip?\n");
 
     // --- Regime 2: realistic pipeline (consumer validates) -----------------
     const double tpns = ohlcv::util::calibrate_ticks_per_ns();
