@@ -104,9 +104,14 @@ bottleneck), median of 5, producer and consumer pinned to two cores of one CCD:
 
 ```
 payload      cursors on separate lines     cursors packed on one line
-64B record        34 M ops/s                    44 M ops/s   (packed +22%)
-8B word          180 M ops/s                   243 M ops/s   (packed +26%)
+64B record       ~33 M ops/s                   ~44 M ops/s    (packed ~+22%, steady)
+8B word         ~185 M ops/s                  ~205-245 M ops/s (packed faster, +8-26%)
 ```
+
+These are off a WSL2 host with no core isolation, so the magnitudes wander run to
+run — the 64B delta sits steadily around +22%, the 8B one swings between roughly
++8% and +26%. What's robust across every run is the **sign**: packing wins. (Bare
+metal with `isolcpus` would tighten the numbers; the direction wouldn't change.)
 
 The surprise: **packing the two cursors onto one cache line is faster** — and the
 textbook rule is to pad them *apart* to avoid false sharing. My read of why this

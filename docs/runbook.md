@@ -147,9 +147,10 @@ Date + one line of what changed and why. Newest first.
 - **2026-06-07** — concurrent: lock-free SPSC ring (`concurrent/spsc_ring.h`) +
   a producer/consumer pipeline bench (`replay_bench_spsc`). Threaded strict-FIFO
   test passes under TSan → acquire/release ordering proven race-free. Ring-bound
-  throughput on the 7900X3D (two cores, one CCD): ~34 M ops/s for 64B records,
-  ~180 M ops/s for 8B words. Surprise finding: **packing the two cursors onto one
-  cache line is ~22–26% *faster* than padding them apart** — this naive ring reads
+  throughput on the 7900X3D (two cores, one CCD): ~33 M ops/s for 64B records,
+  ~185 M ops/s for 8B words. Surprise finding: **packing the two cursors onto one
+  cache line is *faster* than padding them apart** (steady ~+22% for 64B; noisier
+  +8–26% for 8B on this WSL host, but the sign is robust) — this naive ring reads
   both cursors every iteration (true sharing), so one line beats two. Caching the
   far cursor (Vyukov/Folly style) and re-measuring whether that flips is the next
   PR. Realistic (validate-bound) pipeline: ring sits ~95% full, so the handoff
