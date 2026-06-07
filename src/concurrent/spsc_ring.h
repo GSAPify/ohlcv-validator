@@ -38,6 +38,8 @@ class SpscRing {
     static_assert(Capacity >= 2, "Capacity must be at least 2");
 
 public:
+    using value_type = T;
+
     // Enqueue without blocking. Returns false if the ring is full, leaving the
     // backpressure policy (spin, drop, …) to the caller.
     bool try_push(const T& item) noexcept {

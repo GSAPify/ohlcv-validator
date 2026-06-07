@@ -119,5 +119,14 @@ add_executable(replay_bench_rdtsc
 )
 target_include_directories(replay_bench_rdtsc PRIVATE src)
 
+# Producer/consumer pipeline over the lock-free SPSC ring: throughput
+# (padded vs packed cursors) + handoff latency. Linux pins the two threads.
+add_executable(replay_bench_spsc
+    src/bin/replay_bench_spsc.cpp
+    src/validate/validator.cpp
+)
+target_include_directories(replay_bench_spsc PRIVATE src)
+target_link_libraries(replay_bench_spsc PRIVATE Threads::Threads)
+
 enable_testing()
 add_subdirectory(tests)
