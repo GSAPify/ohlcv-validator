@@ -25,13 +25,19 @@ namespace ohlcv::concurrent {
 // and a full vs empty ring is told apart by the counters, not the indices.
 // Capacity must be a power of two.
 //
-// CursorAlign places the two cursors in memory. At 64 they sit on separate cache
-// lines: the producer writing `tail` and the consumer writing `head` then dirty
-// different lines and never invalidate each other's — no false sharing. Shrink
-// it and the cursors pack onto one line, so every push and pop ping-pongs that
-// line between the two cores. That smaller alignment is the deliberately
-// pessimised variant the bench uses to *measure* the cost of false sharing.
-template <typename T, std::size_t Capacity, std::size_t CursorAlign = 64>
+// Two layout/algorithm knobs the bench sweeps to measure their cost:
+//
+//   CursorAlign — cache-line placement of the producer's and consumer's cells.
+//     At 64 each cell sits on its own line; shrink it and they pack onto one.
+//
+//   CacheFarCursor — whether each side keeps a private cached copy of the far
+//     cursor (Vyukov/Folly style) and re-reads the real one only when the cache
+//     says full/empty. With it off (the naive ring), every push reads `head`
+//     and every pop reads `tail` cross-core — true sharing on each iteration.
+//     With it on, those cross-core reads become rare, so the steady state is
+//     each side touching only its own line.
+template <typename T, std::size_t Capacity, std::size_t CursorAlign = 64,
+          bool CacheFarCursor = false>
 class SpscRing {
     static_assert((Capacity & (Capacity - 1)) == 0,
                   "Capacity must be a power of two");
@@ -43,23 +49,36 @@ public:
     // Enqueue without blocking. Returns false if the ring is full, leaving the
     // backpressure policy (spin, drop, …) to the caller.
     bool try_push(const T& item) noexcept {
-        const std::size_t t = tail_.v.load(std::memory_order_relaxed);
-        // head is written only by the consumer; acquire so we observe freed slots.
-        if (t - head_.v.load(std::memory_order_acquire) >= Capacity)
-            return false;  // full
+        const std::size_t t = prod_.tail.load(std::memory_order_relaxed);
+        if constexpr (CacheFarCursor) {
+            // Trust the cached head first; only pay the cross-core read of the
+            // real head when the cache says the ring looks full.
+            if (t - prod_.cached_head >= Capacity) {
+                prod_.cached_head = cons_.head.load(std::memory_order_acquire);
+                if (t - prod_.cached_head >= Capacity) return false;
+            }
+        } else {
+            if (t - cons_.head.load(std::memory_order_acquire) >= Capacity)
+                return false;
+        }
         buf_[t & kMask] = item;
-        tail_.v.store(t + 1, std::memory_order_release);  // publish the slot
+        prod_.tail.store(t + 1, std::memory_order_release);  // publish the slot
         return true;
     }
 
     // Dequeue without blocking into `out`. Returns false if the ring is empty.
     bool try_pop(T& out) noexcept {
-        const std::size_t h = head_.v.load(std::memory_order_relaxed);
-        // tail is written only by the producer; acquire so we observe its writes.
-        if (h == tail_.v.load(std::memory_order_acquire))
-            return false;  // empty
+        const std::size_t h = cons_.head.load(std::memory_order_relaxed);
+        if constexpr (CacheFarCursor) {
+            if (h == cons_.cached_tail) {
+                cons_.cached_tail = prod_.tail.load(std::memory_order_acquire);
+                if (h == cons_.cached_tail) return false;
+            }
+        } else {
+            if (h == prod_.tail.load(std::memory_order_acquire)) return false;
+        }
         out = buf_[h & kMask];
-        head_.v.store(h + 1, std::memory_order_release);  // free the slot
+        cons_.head.store(h + 1, std::memory_order_release);  // free the slot
         return true;
     }
 
@@ -67,8 +86,8 @@ public:
     // aren't a consistent snapshot, so use it for metrics (mean occupancy), never
     // for control flow.
     [[nodiscard]] std::size_t size_approx() const noexcept {
-        const std::size_t t = tail_.v.load(std::memory_order_relaxed);
-        const std::size_t h = head_.v.load(std::memory_order_relaxed);
+        const std::size_t t = prod_.tail.load(std::memory_order_relaxed);
+        const std::size_t h = cons_.head.load(std::memory_order_relaxed);
         return t - h;
     }
 
@@ -79,12 +98,21 @@ public:
 private:
     static constexpr std::size_t kMask = Capacity - 1;
 
-    struct alignas(CursorAlign) Cursor {
-        std::atomic<std::size_t> v{0};
+    // Each side's hot data on its own cell: the cursor it writes plus its cached
+    // copy of the far cursor. Co-locating them means the cached read (when it
+    // happens) and the owner's own writes stay on one line; CursorAlign then
+    // decides whether the two sides' cells share a line or not.
+    struct alignas(CursorAlign) Producer {
+        std::atomic<std::size_t> tail{0};
+        std::size_t              cached_head{0};  // used iff CacheFarCursor
+    };
+    struct alignas(CursorAlign) Consumer {
+        std::atomic<std::size_t> head{0};
+        std::size_t              cached_tail{0};  // used iff CacheFarCursor
     };
 
-    Cursor head_;                    // advanced by the consumer
-    Cursor tail_;                    // advanced by the producer
+    Producer                prod_;  // written by the producer
+    Consumer                cons_;  // written by the consumer
     std::array<T, Capacity> buf_{};  // the slots themselves
 };
 

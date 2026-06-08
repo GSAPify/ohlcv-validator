@@ -82,4 +82,47 @@ TEST(SpscRing, ThreadedStrictFifoNoLoss) {
     EXPECT_EQ(popped, kN);    // nothing dropped
 }
 
+// The cached-cursor variant (CacheFarCursor = true) must obey the exact same
+// contract — caching the far cursor is a performance change, not a semantic one.
+
+TEST(SpscRingCached, FullEmptyAndFifo) {
+    SpscRing<int, 4, 64, true> ring;
+    int out = -1;
+    EXPECT_FALSE(ring.try_pop(out));            // empty
+    for (int i = 0; i < 4; ++i) EXPECT_TRUE(ring.try_push(i));
+    EXPECT_FALSE(ring.try_push(99));            // full, all slots usable
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_TRUE(ring.try_pop(out));
+        EXPECT_EQ(out, i);                      // FIFO
+    }
+    EXPECT_FALSE(ring.try_pop(out));            // empty again
+}
+
+TEST(SpscRingCached, ThreadedStrictFifoNoLoss) {
+    constexpr std::uint64_t kN = 1'000'000;
+    SpscRing<std::uint64_t, 1024, 64, true> ring;
+
+    std::thread producer([&] {
+        for (std::uint64_t i = 0; i < kN; ++i) {
+            while (!ring.try_push(i)) { /* spin: ring full */ }
+        }
+    });
+
+    std::uint64_t popped   = 0;
+    std::uint64_t expected = 0;
+    bool          ordered  = true;
+    while (popped < kN) {
+        std::uint64_t v = 0;
+        if (ring.try_pop(v)) {
+            if (v != expected) ordered = false;
+            ++expected;
+            ++popped;
+        }
+    }
+    producer.join();
+
+    EXPECT_TRUE(ordered);
+    EXPECT_EQ(popped, kN);
+}
+
 }  // namespace
