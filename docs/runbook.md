@@ -32,9 +32,11 @@ set -a && source .env && set +a
 ./build/alpaca_ingest
 ```
 
-Output is `<arrival_ns> <raw_json_frame>` per line; Ctrl+C to stop.
-Outside US market hours you'll only see the auth + subscription acks; no
-trade frames will arrive until the market opens.
+Each parsed trade/bar is validated inline: a `TRADE`/`BAR` line, a `!!` line if
+a (live-meaningful) check fires, and a violation summary on Ctrl+C. Outside US
+market hours you'll only see the auth + subscription acks; no trade frames
+arrive until the market opens. The catch logic is proven offline regardless via
+`./build/tests/unit_tests --gtest_filter='LiveValidation.*'` (no network/keys).
 
 Replay benchmark (the headline latency artifact — no network, no market hours):
 
@@ -144,6 +146,15 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-10** — ingest: wire the live Alpaca path through the validator
+  (`ingest/to_wire.h` adapter; `alpaca_ingest` validates inline + prints a
+  summary). "Runs on real data" now means it *validates*, not just parses.
+  Honest scoping: reconstruction + sequence-gap are N/A on the IEX sample
+  (partial volume, no feed seq → per-symbol synthetic seq), so the summary
+  suppresses them; on clean vendor data the live checks are mostly quiet by
+  design. Catch logic proven offline through the real Parser→adapt→Validator
+  chain (`tests/test_live_validation.cpp`, no network/keys). Quotes are the next
+  step (more frequent; crossed/locked + mid-outliers live there). 72 tests.
 - **2026-06-07** — concurrent: lock-free SPSC ring (`concurrent/spsc_ring.h`) +
   a producer/consumer pipeline bench (`replay_bench_spsc`). Threaded strict-FIFO
   test passes under TSan → acquire/release ordering proven race-free. Ring-bound
