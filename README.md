@@ -167,6 +167,12 @@ Two honest caveats, because the feed shapes what's meaningful:
   full-market bars; and the JSON carries no per-feed sequence number to diff (the
   live path assigns a per-symbol monotonic `seq`, which makes gap detection
   structurally inert rather than falsely clean). The summary says so explicitly.
+- **Bar-level timestamp regression is suppressed (a feed artifact).** A minute bar
+  is stamped with the bar's *window start* and arrives *after* that minute's
+  trades; since trades and bars share one per-symbol timestamp tracker, every bar
+  would otherwise look like a regression. The report layer surfaces the check for
+  trades only — the deeper fix (bars not advancing the trade timestamp tracker) is
+  a validator change left for a full-feed path. (`src/ingest/live_report.h`.)
 
 Highest-value next step: subscribe to and parse **quotes** — they're far more
 frequent than trades and are where crossed/locked books and mid-outliers actually

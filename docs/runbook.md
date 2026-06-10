@@ -151,10 +151,13 @@ Date + one line of what changed and why. Newest first.
   summary). "Runs on real data" now means it *validates*, not just parses.
   Honest scoping: reconstruction + sequence-gap are N/A on the IEX sample
   (partial volume, no feed seq → per-symbol synthetic seq), so the summary
-  suppresses them; on clean vendor data the live checks are mostly quiet by
-  design. Catch logic proven offline through the real Parser→adapt→Validator
-  chain (`tests/test_live_validation.cpp`, no network/keys). Quotes are the next
-  step (more frequent; crossed/locked + mid-outliers live there). 72 tests.
+  suppresses them; also suppresses bar-level timestamp regression (a bar's
+  window-start precedes its trades, which share one per-symbol ts tracker, so
+  every bar would else false-flag — `ingest/live_report.h`). On clean vendor data
+  the live checks are mostly quiet by design. Catch logic + the suppression
+  proven offline through the real Parser→adapt→Validator chain
+  (`tests/test_live_validation.cpp`, no network/keys). Quotes are the next step
+  (more frequent; crossed/locked + mid-outliers live there). 74 tests.
 - **2026-06-07** — concurrent: lock-free SPSC ring (`concurrent/spsc_ring.h`) +
   a producer/consumer pipeline bench (`replay_bench_spsc`). Threaded strict-FIFO
   test passes under TSan → acquire/release ordering proven race-free. Ring-bound
