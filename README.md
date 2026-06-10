@@ -28,8 +28,9 @@ The decisions matter more than the feature list:
 replay path.
 
 ```
-Alpaca IEX ──ws──► parse ──► Trade/Bar          ← live demo (JSON, convenience types)
-                                                  "it works on real data"
+Alpaca IEX ──ws──► parse ──► [→ Wire] ──► Validator ──► live violation report
+                                                          ← runs on real ticks
+                                                            (validates, not just parses)
 
 binary file ──mmap──► WireRecord ──► Validator ──► throughput
   (fixed-layout POD,    no parse,     zero alloc      ~167M rec/s
@@ -144,6 +145,38 @@ their volume/count/VWAP/OHLC (the cross-record check), quote anomalies
 price-band outliers: trades or quote mids that deviate more than 5% from a
 per-symbol EWMA reference are flagged; outliers are excluded from the EWMA so
 one bad tick cannot shift the band for subsequent records.
+
+### Live validation
+
+The same validator now runs **inline on the live Alpaca feed**, not just the
+binary replay: `alpaca_ingest` adapts each parsed trade/bar to the wire types
+(`src/ingest/to_wire.h`) and validates it as it arrives, printing a per-symbol
+flag inline and a violation summary on exit. So "runs on real data" now means it
+*validates* real data, not merely parses it.
+
+Two honest caveats, because the feed shapes what's meaningful:
+
+- **A correctness validator on clean vendor data is supposed to be quiet.** Alpaca
+  won't send negative prices or inverted bands, so on a healthy stream the live
+  checks that can actually fire are the price-band/EWMA outlier and the occasional
+  timestamp regression. Silence is the result, not a letdown — and the catch logic
+  is *proven* on bad-shaped data offline (`tests/test_live_validation.cpp` drives
+  the real Parser→adapt→Validator chain, no network or keys needed).
+- **Reconstruction and sequence-gap detection are N/A on the IEX sample.** IEX is
+  a few percent of consolidated volume, so our trades can't rebuild Alpaca's
+  full-market bars; and the JSON carries no per-feed sequence number to diff (the
+  live path assigns a per-symbol monotonic `seq`, which makes gap detection
+  structurally inert rather than falsely clean). The summary says so explicitly.
+- **Bar-level timestamp regression is suppressed (a feed artifact).** A minute bar
+  is stamped with the bar's *window start* and arrives *after* that minute's
+  trades; since trades and bars share one per-symbol timestamp tracker, every bar
+  would otherwise look like a regression. The report layer surfaces the check for
+  trades only — the deeper fix (bars not advancing the trade timestamp tracker) is
+  a validator change left for a full-feed path. (`src/ingest/live_report.h`.)
+
+Highest-value next step: subscribe to and parse **quotes** — they're far more
+frequent than trades and are where crossed/locked books and mid-outliers actually
+live, which is exactly what would make the live stream interesting.
 
 ## Build
 

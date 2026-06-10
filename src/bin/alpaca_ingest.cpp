@@ -1,16 +1,25 @@
+#include <array>
 #include <atomic>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 
 #include <spdlog/spdlog.h>
 
 #include "ingest/alpaca_client.h"
+#include "ingest/live_report.h"
 #include "ingest/parser.h"
+#include "ingest/to_wire.h"
 #include "util/timing.h"
+#include "validate/validator.h"
 
 namespace {
+
+namespace v  = ohlcv::validate;
+namespace ig = ohlcv::ingest;
 
 std::atomic<bool> g_stop{false};
 
@@ -19,12 +28,12 @@ void on_signal(int) noexcept {
 }
 
 std::string require_env(const char* name) {
-    const char* v = std::getenv(name);
-    if (v == nullptr || *v == '\0') {
+    const char* val = std::getenv(name);
+    if (val == nullptr || *val == '\0') {
         spdlog::error("required env var {} is not set", name);
         std::exit(1);
     }
-    return v;
+    return val;
 }
 
 }  // namespace
@@ -39,6 +48,22 @@ int main() {
 
     ohlcv::ingest::AlpacaClient client{std::move(cfg)};
 
+    // Live validation state. The validator is zero-alloc after construction; the
+    // per-symbol seq counter stands in for the feed sequence the IEX JSON lacks.
+    v::Validator                                   validator;
+    std::unordered_map<std::string, std::uint64_t> next_seq;
+    std::array<std::uint64_t, ig::kLiveLabels.size()> counts{};  // parallel to kLiveLabels
+    std::uint64_t n_trades = 0, n_bars = 0, n_flagged = 0;
+
+    // Tally only the violations surfaced for this record kind, so e.g. a bar's
+    // (artifactual) timestamp regression is never counted.
+    const auto tally = [&](std::uint32_t flags, ig::RecordKind kind) {
+        const std::uint32_t mask = ig::live_surfaced_mask(kind);
+        for (std::size_t i = 0; i < ig::kLiveLabels.size(); ++i)
+            if (flags & mask & static_cast<std::uint32_t>(ig::kLiveLabels[i].bit))
+                ++counts[i];
+    };
+
     try {
         client.connect();
         spdlog::info("welcome: {}", client.read_frame());
@@ -51,24 +76,42 @@ int main() {
 
         ohlcv::ingest::Parser parser;
 
-        spdlog::info("entering read loop; Ctrl+C to stop");
+        spdlog::info("entering read loop; validating inline; Ctrl+C to stop");
         while (!g_stop.load(std::memory_order_relaxed)) {
             const auto arrival_ns = ohlcv::util::now_ns();
             const auto frame      = client.read_frame();
             const auto parsed     = parser.parse(frame);
 
             for (const auto& t : parsed.trades) {
+                if (t.symbol.empty()) continue;  // no symbol → can't key state
+                const std::uint64_t seq = ++next_seq[t.symbol];
+                const auto r = validator.check(ohlcv::ingest::to_wire(t, seq));
+                ++n_trades;
+                tally(r.flags, ig::RecordKind::Trade);
                 std::cout << "TRADE " << arrival_ns << ' ' << t.symbol
                           << " p=" << t.price << " s=" << t.size
-                          << " x=" << t.exchange << " z=" << t.tape
                           << " ts=" << t.ts_ns << '\n';
+                if (r.flags & ig::live_surfaced_mask(ig::RecordKind::Trade)) {
+                    ++n_flagged;
+                    std::cout << "  !! " << t.symbol << ": "
+                              << ig::describe(r.flags, ig::RecordKind::Trade) << '\n';
+                }
             }
             for (const auto& b : parsed.bars) {
+                if (b.symbol.empty()) continue;
+                const std::uint64_t seq = ++next_seq[b.symbol];
+                const auto r = validator.check(ohlcv::ingest::to_wire(b, seq));
+                ++n_bars;
+                tally(r.flags, ig::RecordKind::Bar);
                 std::cout << "BAR   " << arrival_ns << ' ' << b.symbol
                           << " o=" << b.open << " h=" << b.high
                           << " l=" << b.low  << " c=" << b.close
-                          << " v=" << b.volume << " n=" << b.trade_count
-                          << " vw=" << b.vwap << " ts=" << b.start_ns << '\n';
+                          << " v=" << b.volume << " vw=" << b.vwap << '\n';
+                if (r.flags & ig::live_surfaced_mask(ig::RecordKind::Bar)) {
+                    ++n_flagged;
+                    std::cout << "  !! " << b.symbol << ": "
+                              << ig::describe(r.flags, ig::RecordKind::Bar) << '\n';
+                }
             }
             for (const auto& e : parsed.errors) {
                 spdlog::error("alpaca error: {}", e);
@@ -84,6 +127,22 @@ int main() {
     }
 
     client.close();
+
+    // Honest summary. A correctness validator on clean vendor data is *supposed*
+    // to be quiet — silence here is the result, not a letdown.
+    std::cout << "\n--- validation summary ---\n"
+              << "validated " << n_trades << " trades, " << n_bars
+              << " bars; " << n_flagged << " records flagged\n";
+    for (std::size_t i = 0; i < ig::kLiveLabels.size(); ++i)
+        if (counts[i] != 0)
+            std::cout << "  " << ig::kLiveLabels[i].text << ": " << counts[i] << '\n';
+    if (n_flagged == 0)
+        std::cout << "  (no anomalies — expected on a clean feed)\n";
+    std::cout << "note: reconstruction + sequence-gap are N/A on the IEX sample "
+                 "(partial volume, no feed seq); bar timestamp-regression is "
+                 "suppressed (a bar's start precedes its trades by design); quote "
+                 "crossed/locked + mid-outlier checks await quote subscription.\n";
+
     spdlog::info("shut down cleanly");
     return 0;
 }
