@@ -154,20 +154,25 @@ wire types (`src/ingest/to_wire.h`) and validates it as it arrives, printing a
 per-symbol flag inline and a violation summary on exit. So "runs on real data" now
 means it *validates* real data, not merely parses it.
 
-Quotes are the interesting part: they're ~an order of magnitude more frequent than
-trades and carry the order-book checks trades and bars can't — **crossed** (bid >
-ask) and **locked** (bid == ask) books, non-positive or zero-size sides, and
-**quote-mid outliers** against the per-symbol EWMA reference. That's what stops the
-live stream from being silent.
+Quotes carry the order-book checks trades and bars can't express — **crossed**
+(bid > ask) and **locked** (bid == ask) books, non-positive or zero-size sides, and
+**quote-mid outliers** against the per-symbol EWMA reference — and they arrive ~an
+order of magnitude more often than trades. What they add is **coverage, not noise**:
+those checks now run on live data, where order-book anomalies *would* surface. They
+don't make the stream chatty — IEX is a *single venue*, and one matching engine
+won't post a crossed or locked book against itself (crossed/locked is really an
+NBBO-across-venues phenomenon), so on clean IEX data the quote checks stay as quiet
+as the rest. The win is that the checks run, not that they fire.
 
 Honest caveats, because the feed shapes what's meaningful:
 
 - **A correctness validator on clean vendor data is supposed to be quiet.** Alpaca
-  won't send negative prices or inverted bands, so the value checks mostly fire on
-  genuinely odd ticks (a crossed quote across venues, a mid that jumps). Silence is
-  a valid result — and the catch logic is *proven* on bad-shaped data offline
-  (`tests/test_live_validation.cpp` drives the real Parser→adapt→Validator chain,
-  no network or keys needed).
+  won't send negative prices, inverted bands, or (single-venue) crossed books, so
+  on a healthy stream the value checks mostly pass; a `!!` flag means a genuinely
+  odd tick. Silence is the expected result — and the catch logic is *proven* on
+  bad-shaped data offline (`tests/test_live_validation.cpp` drives the real
+  Parser→adapt→Validator chain, no network or keys needed). I have not run this
+  live (claims here are from the offline tests, not an observed live session).
 - **Reconstruction and sequence-gap detection are N/A on the IEX sample.** IEX is
   a few percent of consolidated volume, so our trades can't rebuild Alpaca's
   full-market bars; and the JSON carries no per-feed sequence number to diff (the

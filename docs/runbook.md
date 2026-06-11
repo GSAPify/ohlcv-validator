@@ -149,8 +149,10 @@ Date + one line of what changed and why. Newest first.
 
 - **2026-06-12** — ingest: live **quotes**. Parser handles `"T":"q"` →
   `model::Quote`; `to_wire(Quote)`; `alpaca_ingest` subscribes + validates quotes
-  inline. Quotes are the interesting live checks (crossed/locked books, quote-mid
-  outliers) and ~10x trade frequency. Found + handled a timestamp trap: trades,
+  inline. Quotes add the order-book checks (crossed/locked, quote-mid outliers)
+  and ~10x message volume — coverage, not noise: on clean single-venue IEX data a
+  matching engine won't cross/lock against itself, so they mostly pass too (silence
+  stays the expected result). Found + handled a timestamp trap: trades,
   quotes, and bars share one per-symbol `last_ts`, so a quote advancing the clock
   false-flags a following trade — `live_report.h` now suppresses ts-regression
   across the whole live stream (and `RecordKind` is gone, since that was its only
