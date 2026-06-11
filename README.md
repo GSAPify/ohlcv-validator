@@ -149,34 +149,41 @@ one bad tick cannot shift the band for subsequent records.
 ### Live validation
 
 The same validator now runs **inline on the live Alpaca feed**, not just the
-binary replay: `alpaca_ingest` adapts each parsed trade/bar to the wire types
-(`src/ingest/to_wire.h`) and validates it as it arrives, printing a per-symbol
-flag inline and a violation summary on exit. So "runs on real data" now means it
-*validates* real data, not merely parses it.
+binary replay: `alpaca_ingest` adapts each parsed trade, **quote**, and bar to the
+wire types (`src/ingest/to_wire.h`) and validates it as it arrives, printing a
+per-symbol flag inline and a violation summary on exit. So "runs on real data" now
+means it *validates* real data, not merely parses it.
 
-Two honest caveats, because the feed shapes what's meaningful:
+Quotes are the interesting part: they're ~an order of magnitude more frequent than
+trades and carry the order-book checks trades and bars can't — **crossed** (bid >
+ask) and **locked** (bid == ask) books, non-positive or zero-size sides, and
+**quote-mid outliers** against the per-symbol EWMA reference. That's what stops the
+live stream from being silent.
+
+Honest caveats, because the feed shapes what's meaningful:
 
 - **A correctness validator on clean vendor data is supposed to be quiet.** Alpaca
-  won't send negative prices or inverted bands, so on a healthy stream the live
-  checks that can actually fire are the price-band/EWMA outlier and the occasional
-  timestamp regression. Silence is the result, not a letdown — and the catch logic
-  is *proven* on bad-shaped data offline (`tests/test_live_validation.cpp` drives
-  the real Parser→adapt→Validator chain, no network or keys needed).
+  won't send negative prices or inverted bands, so the value checks mostly fire on
+  genuinely odd ticks (a crossed quote across venues, a mid that jumps). Silence is
+  a valid result — and the catch logic is *proven* on bad-shaped data offline
+  (`tests/test_live_validation.cpp` drives the real Parser→adapt→Validator chain,
+  no network or keys needed).
 - **Reconstruction and sequence-gap detection are N/A on the IEX sample.** IEX is
   a few percent of consolidated volume, so our trades can't rebuild Alpaca's
   full-market bars; and the JSON carries no per-feed sequence number to diff (the
   live path assigns a per-symbol monotonic `seq`, which makes gap detection
-  structurally inert rather than falsely clean). The summary says so explicitly.
-- **Bar-level timestamp regression is suppressed (a feed artifact).** A minute bar
-  is stamped with the bar's *window start* and arrives *after* that minute's
-  trades; since trades and bars share one per-symbol timestamp tracker, every bar
-  would otherwise look like a regression. The report layer surfaces the check for
-  trades only — the deeper fix (bars not advancing the trade timestamp tracker) is
-  a validator change left for a full-feed path. (`src/ingest/live_report.h`.)
+  structurally inert rather than falsely clean).
+- **Timestamp regression is suppressed across the whole live stream.** Trades,
+  quotes, and bars are separate streams with independent event times, but the
+  validator tracks one `last_ts` *per symbol* — so a quote advancing the clock
+  makes a following trade with a slightly earlier event time look like a
+  regression. Monotonicity isn't a cross-stream property on a merged feed, so the
+  report layer (`src/ingest/live_report.h`) surfaces only the clock-independent
+  value checks. (Proper fix — per-stream `last_ts` in the validator — is the next
+  step; it also improves the binary path.)
 
-Highest-value next step: subscribe to and parse **quotes** — they're far more
-frequent than trades and are where crossed/locked books and mid-outliers actually
-live, which is exactly what would make the live stream interesting.
+Next step: **per-stream `last_ts`** in the validator, so timestamp regression
+becomes meaningful again (a within-stream property) instead of suppressed.
 
 ## Build
 

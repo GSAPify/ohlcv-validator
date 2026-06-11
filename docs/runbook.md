@@ -32,11 +32,12 @@ set -a && source .env && set +a
 ./build/alpaca_ingest
 ```
 
-Each parsed trade/bar is validated inline: a `TRADE`/`BAR` line, a `!!` line if
-a (live-meaningful) check fires, and a violation summary on Ctrl+C. Outside US
-market hours you'll only see the auth + subscription acks; no trade frames
-arrive until the market opens. The catch logic is proven offline regardless via
-`./build/tests/unit_tests --gtest_filter='LiveValidation.*'` (no network/keys).
+Each parsed trade/quote/bar is validated inline: a `TRADE`/`QUOTE`/`BAR` line, a
+`!!` line if a (live-meaningful) check fires, and a violation summary on Ctrl+C.
+Quotes carry the order-book checks (crossed/locked, mid-outlier). Outside US
+market hours you'll only see the auth + subscription acks; no data frames arrive
+until the market opens. The catch logic is proven offline regardless via
+`./build/tests/unit_tests --gtest_filter='Live*'` (no network/keys).
 
 Replay benchmark (the headline latency artifact — no network, no market hours):
 
@@ -146,6 +147,15 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-12** — ingest: live **quotes**. Parser handles `"T":"q"` →
+  `model::Quote`; `to_wire(Quote)`; `alpaca_ingest` subscribes + validates quotes
+  inline. Quotes are the interesting live checks (crossed/locked books, quote-mid
+  outliers) and ~10x trade frequency. Found + handled a timestamp trap: trades,
+  quotes, and bars share one per-symbol `last_ts`, so a quote advancing the clock
+  false-flags a following trade — `live_report.h` now suppresses ts-regression
+  across the whole live stream (and `RecordKind` is gone, since that was its only
+  use). Proper fix (per-stream `last_ts` in the validator) is the next PR. 78
+  tests (quote parse, crossed-quote catch, quote-pollutes-clock evidence).
 - **2026-06-10** — ingest: wire the live Alpaca path through the validator
   (`ingest/to_wire.h` adapter; `alpaca_ingest` validates inline + prints a
   summary). "Runs on real data" now means it *validates*, not just parses.
