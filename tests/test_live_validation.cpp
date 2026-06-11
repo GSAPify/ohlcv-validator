@@ -64,6 +64,26 @@ TEST(LiveValidation, PriceBandOutlierCaughtAcrossFrames) {
     EXPECT_TRUE(val.check(to_wire(f2.trades[0], 2U)).has(v::kPriceBandBreach));  // +10% > 5% band
 }
 
+TEST(LiveValidation, CleanQuoteStaysSilent) {
+    Parser p;
+    const auto f = p.parse(
+        R"json([{"T":"q","S":"AAPL","bx":"V","bp":144.50,"bs":2,"ax":"W","ap":144.60,)json"
+        R"json("as":3,"z":"C","t":"2022-01-12T19:46:00.000000000Z"}])json");
+    ASSERT_EQ(f.quotes.size(), 1U);
+    v::Validator val;
+    EXPECT_EQ(val.check(to_wire(f.quotes[0], 1U)).flags, v::kNone);  // bid < ask, sizes > 0
+}
+
+TEST(LiveValidation, CrossedQuoteCaught) {
+    Parser p;
+    const auto f = p.parse(
+        R"json([{"T":"q","S":"AAPL","bx":"V","bp":144.60,"bs":2,"ax":"W","ap":144.50,)json"
+        R"json("as":3,"z":"C","t":"2022-01-12T19:46:00.000000000Z"}])json");
+    ASSERT_EQ(f.quotes.size(), 1U);
+    v::Validator val;
+    EXPECT_TRUE(val.check(to_wire(f.quotes[0], 1U)).has(v::kQuoteCrossed));  // bid > ask
+}
+
 // An Alpaca minute bar's start_ns precedes its trades, and trades+bars share the
 // per-symbol last-timestamp, so the validator flags a regression on the bar.
 // That's a feed/representation artifact — which is exactly why the live report
@@ -85,21 +105,43 @@ TEST(LiveValidation, BarAfterTradeRegressesAtValidatorLevel) {
     EXPECT_TRUE(val.check(to_wire(b, 2U)).has(v::kTimestampRegression));
 }
 
-// The report layer surfaces timestamp regression for trades but suppresses it
-// for bars, while genuine bar faults still surface.
-TEST(LiveReport, SuppressesBarTimestampRegressionButNotTrade) {
+// A quote and a trade are separate streams sharing one per-symbol clock inside
+// the validator: a quote advances last_ts, so a trade with a slightly earlier
+// event time that follows it false-flags regression. This is *why* the live
+// report suppresses timestamp regression for the whole stream (next test) — the
+// report layer can't fix it, because the quote already mutated last_ts.
+TEST(LiveValidation, QuotePollutesSharedTimestampClock) {
+    v::Validator        val;
+    ohlcv::model::Quote q;
+    q.symbol = "AAPL";
+    q.bid_price = 100.0;
+    q.ask_price = 100.1;
+    q.bid_size = q.ask_size = 1;
+    q.ts_ns = 1'700'000'000'500'000'000ULL;     // ...000.500
+    ohlcv::model::Trade t;
+    t.symbol = "AAPL";
+    t.price  = 100.05;
+    t.size   = 10;
+    t.ts_ns  = 1'700'000'000'400'000'000ULL;     // ...000.400 — earlier event time
+    (void)val.check(to_wire(q, 1U));
+    EXPECT_TRUE(val.check(to_wire(t, 2U)).has(v::kTimestampRegression));
+}
+
+// The report layer surfaces only clock-independent value checks. The
+// clock-coupled / coverage-dependent ones (timestamp regression, sequence gap,
+// reconstruction) are never surfaced live; quote value checks are.
+TEST(LiveReport, SuppressesClockCoupledSurfacesValueChecks) {
     using ohlcv::ingest::describe;
-    using ohlcv::ingest::live_surfaced_mask;
-    using ohlcv::ingest::RecordKind;
-    const std::uint32_t ts = v::kTimestampRegression;
+    using ohlcv::ingest::kSurfacedMask;
 
-    EXPECT_TRUE(live_surfaced_mask(RecordKind::Trade) & ts);
-    EXPECT_EQ(describe(ts, RecordKind::Trade), "timestamp regression");
+    EXPECT_FALSE(kSurfacedMask & v::kTimestampRegression);
+    EXPECT_FALSE(kSurfacedMask & v::kSequenceGap);
+    EXPECT_FALSE(kSurfacedMask & v::kBarVwapReconstructMismatch);
+    EXPECT_EQ(describe(v::kTimestampRegression), "");
 
-    EXPECT_FALSE(live_surfaced_mask(RecordKind::Bar) & ts);
-    EXPECT_EQ(describe(ts, RecordKind::Bar), "");
-
-    EXPECT_EQ(describe(v::kBarLowAboveHigh, RecordKind::Bar), "bar low > high");
+    EXPECT_TRUE(kSurfacedMask & v::kQuoteCrossed);
+    EXPECT_EQ(describe(v::kQuoteCrossed), "quote crossed (bid > ask)");
+    EXPECT_EQ(describe(v::kBarLowAboveHigh), "bar low > high");
 }
 
 }  // namespace

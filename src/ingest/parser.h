@@ -14,6 +14,7 @@ namespace ohlcv::ingest {
 struct ParsedFrame {
     std::vector<model::Trade> trades;
     std::vector<model::Bar>   bars;
+    std::vector<model::Quote> quotes;
     std::vector<std::string>  errors;          // payloads of T="error" messages
     std::vector<std::string>  unknown_types;   // T values we don't handle yet
     bool has_connected_ack       = false;

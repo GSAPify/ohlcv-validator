@@ -80,6 +80,24 @@ void parse_bar(simdjson::ondemand::object& obj, ParsedFrame& out) {
     out.bars.push_back(std::move(b));
 }
 
+void parse_quote(simdjson::ondemand::object& obj, ParsedFrame& out) {
+    model::Quote q;
+    q.symbol       = get_string(obj, "S");
+    q.bid_exchange = get_string(obj, "bx");
+    q.bid_price    = get_double(obj, "bp");
+    q.bid_size     = get_u64(obj, "bs");
+    q.ask_exchange = get_string(obj, "ax");
+    q.ask_price    = get_double(obj, "ap");
+    q.ask_size     = get_u64(obj, "as");
+    q.tape         = get_string(obj, "z");
+
+    std::string ts = get_string(obj, "t");
+    if (!ts.empty()) {
+        q.ts_ns = model::parse_rfc3339_nano(ts);
+    }
+    out.quotes.push_back(std::move(q));
+}
+
 void parse_success(simdjson::ondemand::object& obj, ParsedFrame& out) {
     const auto msg = get_string(obj, "msg");
     if (msg == "connected") {
@@ -121,6 +139,8 @@ ParsedFrame Parser::parse(std::string_view frame) {
 
         if (type == "t") {
             parse_trade(obj, out);
+        } else if (type == "q") {
+            parse_quote(obj, out);
         } else if (type == "b") {
             parse_bar(obj, out);
         } else if (type == "success") {
