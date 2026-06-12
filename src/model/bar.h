@@ -32,4 +32,16 @@ struct Bar {
     double        vwap        = 0.0;
 };
 
+struct Quote {
+    std::string   symbol;
+    Timestamp     ts_ns        = 0;   // exchange timestamp
+    double        bid_price    = 0.0;
+    double        ask_price    = 0.0;
+    std::uint64_t bid_size     = 0;
+    std::uint64_t ask_size     = 0;
+    std::string   bid_exchange;       // venue posting the bid (single-char code)
+    std::string   ask_exchange;       // venue posting the ask
+    std::string   tape;               // "A", "B", or "C"
+};
+
 }  // namespace ohlcv::model

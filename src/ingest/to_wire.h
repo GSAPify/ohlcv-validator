@@ -54,4 +54,19 @@ inline model::WireBar to_wire(const model::Bar& b, std::uint64_t seq) noexcept {
     return w;
 }
 
+inline model::WireQuote to_wire(const model::Quote& q, std::uint64_t seq) noexcept {
+    model::WireQuote w{};
+    set_symbol(w.symbol, q.symbol);
+    w.ts_ns        = q.ts_ns;
+    w.seq          = seq;
+    w.bid_price    = q.bid_price;
+    w.ask_price    = q.ask_price;
+    w.bid_size     = q.bid_size;
+    w.ask_size     = q.ask_size;
+    w.bid_exchange = q.bid_exchange.empty() ? '\0' : q.bid_exchange.front();
+    w.ask_exchange = q.ask_exchange.empty() ? '\0' : q.ask_exchange.front();
+    w.tape         = q.tape.empty() ? '\0' : q.tape.front();
+    return w;
+}
+
 }  // namespace ohlcv::ingest
