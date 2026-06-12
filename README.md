@@ -28,8 +28,9 @@ The decisions matter more than the feature list:
 replay path.
 
 ```
-Alpaca IEX ──ws──► parse ──► Trade/Bar          ← live demo (JSON, convenience types)
-                                                  "it works on real data"
+Alpaca IEX ──ws──► parse ──► [→ Wire] ──► Validator ──► live violation report
+                                                          ← runs on real ticks
+                                                            (validates, not just parses)
 
 binary file ──mmap──► WireRecord ──► Validator ──► throughput
   (fixed-layout POD,    no parse,     zero alloc      ~167M rec/s
@@ -144,6 +145,50 @@ their volume/count/VWAP/OHLC (the cross-record check), quote anomalies
 price-band outliers: trades or quote mids that deviate more than 5% from a
 per-symbol EWMA reference are flagged; outliers are excluded from the EWMA so
 one bad tick cannot shift the band for subsequent records.
+
+### Live validation
+
+The same validator now runs **inline on the live Alpaca feed**, not just the
+binary replay: `alpaca_ingest` adapts each parsed trade, **quote**, and bar to the
+wire types (`src/ingest/to_wire.h`) and validates it as it arrives, printing a
+per-symbol flag inline and a violation summary on exit. So "runs on real data" now
+means it *validates* real data, not merely parses it.
+
+Quotes carry the order-book checks trades and bars can't express — **crossed**
+(bid > ask) and **locked** (bid == ask) books, non-positive or zero-size sides, and
+**quote-mid outliers** against the per-symbol EWMA reference — and they arrive ~an
+order of magnitude more often than trades. What they add is **coverage, not noise**:
+those checks now run on live data, where order-book anomalies *would* surface. They
+don't make the stream chatty — IEX is a *single venue*, and one matching engine
+won't post a crossed or locked book against itself (crossed/locked is really an
+NBBO-across-venues phenomenon), so on clean IEX data the quote checks stay as quiet
+as the rest. The win is that the checks run, not that they fire.
+
+Honest caveats, because the feed shapes what's meaningful:
+
+- **A correctness validator on clean vendor data is supposed to be quiet.** Alpaca
+  won't send negative prices, inverted bands, or (single-venue) crossed books, so
+  on a healthy stream the value checks mostly pass; a `!!` flag means a genuinely
+  odd tick. Silence is the expected result — and the catch logic is *proven* on
+  bad-shaped data offline (`tests/test_live_validation.cpp` drives the real
+  Parser→adapt→Validator chain, no network or keys needed). I have not run this
+  live (claims here are from the offline tests, not an observed live session).
+- **Reconstruction and sequence-gap detection are N/A on the IEX sample.** IEX is
+  a few percent of consolidated volume, so our trades can't rebuild Alpaca's
+  full-market bars; and the JSON carries no per-feed sequence number to diff (the
+  live path assigns a per-symbol monotonic `seq`, which makes gap detection
+  structurally inert rather than falsely clean).
+- **Timestamp regression is suppressed across the whole live stream.** Trades,
+  quotes, and bars are separate streams with independent event times, but the
+  validator tracks one `last_ts` *per symbol* — so a quote advancing the clock
+  makes a following trade with a slightly earlier event time look like a
+  regression. Monotonicity isn't a cross-stream property on a merged feed, so the
+  report layer (`src/ingest/live_report.h`) surfaces only the clock-independent
+  value checks. (Proper fix — per-stream `last_ts` in the validator — is the next
+  step; it also improves the binary path.)
+
+Next step: **per-stream `last_ts`** in the validator, so timestamp regression
+becomes meaningful again (a within-stream property) instead of suppressed.
 
 ## Build
 

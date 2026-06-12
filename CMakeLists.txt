@@ -77,6 +77,7 @@ add_executable(alpaca_ingest
     src/bin/alpaca_ingest.cpp
     src/ingest/alpaca_client.cpp
     src/ingest/parser.cpp
+    src/validate/validator.cpp
 )
 target_include_directories(alpaca_ingest PRIVATE src)
 target_link_libraries(alpaca_ingest PRIVATE

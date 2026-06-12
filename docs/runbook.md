@@ -32,9 +32,12 @@ set -a && source .env && set +a
 ./build/alpaca_ingest
 ```
 
-Output is `<arrival_ns> <raw_json_frame>` per line; Ctrl+C to stop.
-Outside US market hours you'll only see the auth + subscription acks; no
-trade frames will arrive until the market opens.
+Each parsed trade/quote/bar is validated inline: a `TRADE`/`QUOTE`/`BAR` line, a
+`!!` line if a (live-meaningful) check fires, and a violation summary on Ctrl+C.
+Quotes carry the order-book checks (crossed/locked, mid-outlier). Outside US
+market hours you'll only see the auth + subscription acks; no data frames arrive
+until the market opens. The catch logic is proven offline regardless via
+`./build/tests/unit_tests --gtest_filter='Live*'` (no network/keys).
 
 Replay benchmark (the headline latency artifact — no network, no market hours):
 
@@ -144,6 +147,29 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-12** — ingest: live **quotes**. Parser handles `"T":"q"` →
+  `model::Quote`; `to_wire(Quote)`; `alpaca_ingest` subscribes + validates quotes
+  inline. Quotes add the order-book checks (crossed/locked, quote-mid outliers)
+  and ~10x message volume — coverage, not noise: on clean single-venue IEX data a
+  matching engine won't cross/lock against itself, so they mostly pass too (silence
+  stays the expected result). Found + handled a timestamp trap: trades,
+  quotes, and bars share one per-symbol `last_ts`, so a quote advancing the clock
+  false-flags a following trade — `live_report.h` now suppresses ts-regression
+  across the whole live stream (and `RecordKind` is gone, since that was its only
+  use). Proper fix (per-stream `last_ts` in the validator) is the next PR. 78
+  tests (quote parse, crossed-quote catch, quote-pollutes-clock evidence).
+- **2026-06-10** — ingest: wire the live Alpaca path through the validator
+  (`ingest/to_wire.h` adapter; `alpaca_ingest` validates inline + prints a
+  summary). "Runs on real data" now means it *validates*, not just parses.
+  Honest scoping: reconstruction + sequence-gap are N/A on the IEX sample
+  (partial volume, no feed seq → per-symbol synthetic seq), so the summary
+  suppresses them; also suppresses bar-level timestamp regression (a bar's
+  window-start precedes its trades, which share one per-symbol ts tracker, so
+  every bar would else false-flag — `ingest/live_report.h`). On clean vendor data
+  the live checks are mostly quiet by design. Catch logic + the suppression
+  proven offline through the real Parser→adapt→Validator chain
+  (`tests/test_live_validation.cpp`, no network/keys). Quotes are the next step
+  (more frequent; crossed/locked + mid-outliers live there). 74 tests.
 - **2026-06-07** — concurrent: lock-free SPSC ring (`concurrent/spsc_ring.h`) +
   a producer/consumer pipeline bench (`replay_bench_spsc`). Threaded strict-FIFO
   test passes under TSan → acquire/release ordering proven race-free. Ring-bound
