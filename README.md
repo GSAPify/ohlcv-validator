@@ -116,15 +116,31 @@ metal with `isolcpus` would tighten the numbers; the direction wouldn't change.)
 
 The surprise: **packing the two cursors onto one cache line is faster** — and the
 textbook rule is to pad them *apart* to avoid false sharing. My read of why this
-ring inverts that (a hypothesis, to be confirmed by the experiment below): it
-re-reads *both* cursors every iteration — the producer checks `head` to see if the
-ring is full, the consumer checks `tail` to see if it's empty — so the cursors are
-*truly* shared, not falsely. On one line a single cross-core transfer carries both
-updates; split across two lines, both lines bounce every item. The "pad your
-cursors" advice assumes the production optimization — each side *caches* the far
-cursor and re-reads it only when its cache says full/empty — which this naive ring
-doesn't have yet. Adding that, and re-measuring whether the padding result flips,
-is the next step.
+ring inverts that: it re-reads *both* cursors every iteration — the producer checks
+`head` to see if the ring is full, the consumer checks `tail` to see if it's empty
+— so the cursors are *truly* shared, not falsely. On one line a single cross-core
+transfer carries both updates; split across two lines, both lines bounce every
+item. The "pad your cursors" advice assumes the production optimization — each side
+*caches* the far cursor and re-reads it only when its cache says full/empty.
+
+So I built that (the `CacheFarCursor` variant) and measured whether it flips the
+result. It **half** did, which is the honest and more interesting outcome:
+
+```
+64B record (median of 5, 4 separate runs)   separate    packed     packed wins by
+naive  ring (re-reads both cursors)          ~33 M/s    ~44 M/s        ~23%  (stable)
+cached ring (caches the far cursor)          ~43 M/s    ~47 M/s        ~9%   (stable)
+```
+
+Caching **raised throughput ~30%** (separate-lines 64B, ~33→43 M ops/s) — as
+predicted, eliminating most cross-core cursor reads. And it **shrank** packing's
+lead from ~23% to ~9%, exactly the direction the true-sharing story predicts (less
+cursor traffic → cursor placement matters less). But it did **not flip** the sign:
+packed still wins. So padding the cursors is *still* the wrong call for this design
+even with the textbook optimization applied — the true-sharing mechanism is part of
+the story, not all of it. (8B-word runs are too noisy on this WSL host to quote a
+delta, but packed won there in every run too.) I'd rather ship that than a clean
+story the data doesn't support.
 
 Realistic pipeline (the consumer validates each record): the producer is a 64-byte
 `mmap` copy, so it outruns the validator and the ring sits ~95% full. End-to-end
