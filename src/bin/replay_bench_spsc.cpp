@@ -196,45 +196,61 @@ int main(int argc, char** argv) {
                 path.c_str(), (unsigned long long)count,
                 (unsigned long long)passes, (unsigned long long)total);
 
-    // --- Regime 1: ring-bound throughput, padded vs packed cursors ---------
-    // Two payload sizes. 64B record: the per-item cross-core line transfer of
-    // the payload dominates, so cursor padding is in the noise. 8B word: the
-    // payload is cheap, so the cursors' cache-line placement is what's left to
-    // pay for — and separating them onto their own lines should now win.
+    // --- Regime 1: ring-bound throughput -----------------------------------
+    // Sweep payload size x cursor placement (separate vs packed cache lines) x
+    // algorithm (NAIVE: read both cursors every iteration; CACHED: keep a local
+    // copy of the far cursor, re-read it only on full/empty). The naive ring's
+    // surprise was that PACKING the cursors wins — read every iteration, they're
+    // truly shared, so one bouncing line beats two. Caching makes those
+    // cross-core reads rare, so the prediction is: throughput rises AND the
+    // separate-vs-packed sign flips back to the textbook (separate wins).
     constexpr std::size_t kPacked = alignof(std::atomic<std::size_t>);
-    using RecPadded = SpscRing<WireRecord, kRingCapacity, 64>;
-    using RecPacked = SpscRing<WireRecord, kRingCapacity, kPacked>;
-    using U64Padded = SpscRing<std::uint64_t, kRingCapacity, 64>;
-    using U64Packed = SpscRing<std::uint64_t, kRingCapacity, kPacked>;
+    using RecSepN = SpscRing<WireRecord,    kRingCapacity, 64,      false>;
+    using RecPakN = SpscRing<WireRecord,    kRingCapacity, kPacked, false>;
+    using U64SepN = SpscRing<std::uint64_t, kRingCapacity, 64,      false>;
+    using U64PakN = SpscRing<std::uint64_t, kRingCapacity, kPacked, false>;
+    using RecSepC = SpscRing<WireRecord,    kRingCapacity, 64,      true>;
+    using RecPakC = SpscRing<WireRecord,    kRingCapacity, kPacked, true>;
+    using U64SepC = SpscRing<std::uint64_t, kRingCapacity, 64,      true>;
+    using U64PakC = SpscRing<std::uint64_t, kRingCapacity, kPacked, true>;
 
     const auto rec_make = [records](std::uint64_t i) { return records[i]; };
     const auto u64_make = [](std::uint64_t i) { return i; };
 
-    const double rec_pad =
-        ring_throughput_median<RecPadded>(count, passes, pcore, ccore, rec_make);
-    const double rec_pak =
-        ring_throughput_median<RecPacked>(count, passes, pcore, ccore, rec_make);
-    const double u64_pad =
-        ring_throughput_median<U64Padded>(count, passes, pcore, ccore, u64_make);
-    const double u64_pak =
-        ring_throughput_median<U64Packed>(count, passes, pcore, ccore, u64_make);
+    const double rec_sep_n =
+        ring_throughput_median<RecSepN>(count, passes, pcore, ccore, rec_make);
+    const double rec_pak_n =
+        ring_throughput_median<RecPakN>(count, passes, pcore, ccore, rec_make);
+    const double u64_sep_n =
+        ring_throughput_median<U64SepN>(count, passes, pcore, ccore, u64_make);
+    const double u64_pak_n =
+        ring_throughput_median<U64PakN>(count, passes, pcore, ccore, u64_make);
+    const double rec_sep_c =
+        ring_throughput_median<RecSepC>(count, passes, pcore, ccore, rec_make);
+    const double rec_pak_c =
+        ring_throughput_median<RecPakC>(count, passes, pcore, ccore, rec_make);
+    const double u64_sep_c =
+        ring_throughput_median<U64SepC>(count, passes, pcore, ccore, u64_make);
+    const double u64_pak_c =
+        ring_throughput_median<U64PakC>(count, passes, pcore, ccore, u64_make);
 
-    std::printf("\n  [1] ring-bound throughput, separate vs packed cursors "
-                "(median of %d)\n", kThroughputReps);
-    std::printf("      payload      separate-lines      packed         "
-                "separate speedup\n");
-    std::printf("      64B record   %6.1f M ops/s     %6.1f M ops/s   %+.1f%%\n",
-                rec_pad / 1e6, rec_pak / 1e6,
-                rec_pak > 0.0 ? (rec_pad - rec_pak) / rec_pak * 100.0 : 0.0);
-    std::printf("      8B word      %6.1f M ops/s     %6.1f M ops/s   %+.1f%%\n",
-                u64_pad / 1e6, u64_pak / 1e6,
-                u64_pak > 0.0 ? (u64_pad - u64_pak) / u64_pak * 100.0 : 0.0);
-    std::printf("      → separating the cursors COSTS throughput here: this "
-                "naive ring reads both\n");
-    std::printf("        every iteration (true sharing), so two lines bounce "
-                "instead of one. Caching\n");
-    std::printf("        the far cursor (Vyukov/Folly style) is the next "
-                "experiment — does it flip?\n");
+    const auto row = [](const char* label, double sep, double pak) {
+        std::printf("      %-11s %6.1f M ops/s   %6.1f M ops/s   separate %+.1f%%\n",
+                    label, sep / 1e6, pak / 1e6,
+                    pak > 0.0 ? (sep - pak) / pak * 100.0 : 0.0);
+    };
+
+    std::printf("\n  [1] ring-bound throughput (median of %d) — separate vs "
+                "packed cursor lines\n", kThroughputReps);
+    std::printf("      payload      separate          packed           delta\n");
+    std::printf("      naive ring (reads both cursors every iteration):\n");
+    row("64B record", rec_sep_n, rec_pak_n);
+    row("8B word",    u64_sep_n, u64_pak_n);
+    std::printf("      cached ring (caches the far cursor, re-reads on full/empty):\n");
+    row("64B record", rec_sep_c, rec_pak_c);
+    row("8B word",    u64_sep_c, u64_pak_c);
+    std::printf("      → did caching raise throughput AND flip the cursor-line "
+                "delta back to separate-wins?\n");
 
     // --- Regime 2: realistic pipeline (consumer validates) -----------------
     const double tpns = ohlcv::util::calibrate_ticks_per_ns();

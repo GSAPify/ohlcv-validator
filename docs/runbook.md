@@ -147,6 +147,16 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-13** — concurrent: cached-cursor SPSC variant (`CacheFarCursor`) +
+  the measurement that was blocked on the box for days. Caching the far cursor
+  (re-read only on full/empty) **raised ring-bound throughput ~30%** (64B
+  separate-lines ~33→43 M ops/s) — as predicted, since most cross-core cursor
+  reads vanish. But it did **not** flip the cache-line result: packed cursors
+  still win (~9% for 64B, down from ~23% naive — the gap shrank, consistent with
+  the true-sharing story, but didn't cross zero). So PR #6's "padding wins once
+  cached" hypothesis is half-confirmed; honest null on the flip. `SpscRingCached`
+  tests TSan-clean. README updated to the measured outcome. (7900X3D, 2 cores/1
+  CCD, WSL2 — 8B-word deltas too noisy to quote.)
 - **2026-06-12** — ingest: live **quotes**. Parser handles `"T":"q"` →
   `model::Quote`; `to_wire(Quote)`; `alpaca_ingest` subscribes + validates quotes
   inline. Quotes add the order-book checks (crossed/locked, quote-mid outliers)
