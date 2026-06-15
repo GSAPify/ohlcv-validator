@@ -125,6 +125,20 @@ TEST(LiveValidation, QuoteDoesNotPolluteTradeTimestamp) {
     EXPECT_FALSE(val.check(to_wire(t, 2U)).has(v::kTimestampRegression));
 }
 
+// ...but within the quote stream, a quote going backwards in time still flags.
+TEST(LiveValidation, QuoteWithinStreamRegressionDetected) {
+    v::Validator        val;
+    ohlcv::model::Quote q;
+    q.symbol = "AAPL";
+    q.bid_price = 100.0;
+    q.ask_price = 100.1;
+    q.bid_size = q.ask_size = 1;
+    q.ts_ns = 1'700'000'000'500'000'000ULL;
+    EXPECT_FALSE(val.check(to_wire(q, 1U)).has(v::kTimestampRegression));  // first quote
+    q.ts_ns = 1'700'000'000'400'000'000ULL;                               // earlier than prev quote
+    EXPECT_TRUE(val.check(to_wire(q, 2U)).has(v::kTimestampRegression));
+}
+
 // The report layer surfaces only clock-independent value checks. The
 // clock-coupled / coverage-dependent ones (timestamp regression, sequence gap,
 // reconstruction) are never surfaced live; quote value checks are.

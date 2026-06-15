@@ -153,9 +153,11 @@ Date + one line of what changed and why. Newest first.
   stream as a timestamp regression. Now each stream tracks its own `last_ts`
   (`Stream` enum, unseen-sentinel 0); `seq`/gap stays a shared per-symbol cursor
   (the feed/generator advances it across all types). Timestamp regression is now
-  a correct *within-stream* check (fixes the binary path too) — tests inverted
-  (cross-stream no longer flags) + within-stream positives added for trades and
-  bars. Stays suppressed on the live report for the narrower, honest reason that
+  a correct *within-stream* check — robust for any multi-stream dataset, though
+  no observed binary-path change (the generator emits monotonic-across-type ts;
+  replay still flags 756 injected regressions/run). Tests inverted (cross-stream
+  no longer flags) + within-stream positives for trades, quotes, and bars. Stays
+  suppressed on the live report for the narrower, honest reason that
   it's unverified on real (possibly bursty/reordered) delivery; un-suppressing is
   gated on a live measurement. 82 tests; alloc-guard still clean (Slot +16B,
   still a fixed std::array, zero-heap).

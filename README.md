@@ -198,8 +198,12 @@ Honest caveats, because the feed shapes what's meaningful:
   narrower reason.** The validator tracks a **per-stream `last_ts`** (trade /
   quote / bar each), so the old cross-stream false-flagging — a quote advancing
   one shared clock and tripping a following trade — is fixed; monotonicity is
-  checked *within* a stream, where it belongs (and it now protects the binary path
-  too). The check stays suppressed on the *live* report for the remaining reason
+  checked *within* a stream, where it belongs. (This makes the check correct for
+  *any* multi-stream dataset; the current binary generator happens to emit
+  monotonic-across-type timestamps, so there's no observed binary-path change —
+  it still flags 756 injected regressions per run, same as before. The payoff is
+  the live un-suppression below.) The check stays suppressed on the *live* report
+  for the remaining reason
   that it's unverified on real delivery: IEX event timestamps arrive over a
   websocket with no monotonic-delivery guarantee, and same-timestamp or
   sub-microsecond-reordered ticks within one stream could flag benign regressions.
