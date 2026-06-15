@@ -194,17 +194,20 @@ Honest caveats, because the feed shapes what's meaningful:
   full-market bars; and the JSON carries no per-feed sequence number to diff (the
   live path assigns a per-symbol monotonic `seq`, which makes gap detection
   structurally inert rather than falsely clean).
-- **Timestamp regression is suppressed across the whole live stream.** Trades,
-  quotes, and bars are separate streams with independent event times, but the
-  validator tracks one `last_ts` *per symbol* — so a quote advancing the clock
-  makes a following trade with a slightly earlier event time look like a
-  regression. Monotonicity isn't a cross-stream property on a merged feed, so the
-  report layer (`src/ingest/live_report.h`) surfaces only the clock-independent
-  value checks. (Proper fix — per-stream `last_ts` in the validator — is the next
-  step; it also improves the binary path.)
+- **Timestamp regression is correct now, but still suppressed live — for a
+  narrower reason.** The validator tracks a **per-stream `last_ts`** (trade /
+  quote / bar each), so the old cross-stream false-flagging — a quote advancing
+  one shared clock and tripping a following trade — is fixed; monotonicity is
+  checked *within* a stream, where it belongs (and it now protects the binary path
+  too). The check stays suppressed on the *live* report for the remaining reason
+  that it's unverified on real delivery: IEX event timestamps arrive over a
+  websocket with no monotonic-delivery guarantee, and same-timestamp or
+  sub-microsecond-reordered ticks within one stream could flag benign regressions.
+  Un-suppressing is gated on a live measurement (count how often it actually fires
+  on real frames), not on more reasoning.
 
-Next step: **per-stream `last_ts`** in the validator, so timestamp regression
-becomes meaningful again (a within-stream property) instead of suppressed.
+Next step: that live measurement — capture real frames and see whether
+within-stream timestamp regression fires on benign jitter before un-suppressing it.
 
 ## Build
 
