@@ -79,11 +79,19 @@ private:
     static constexpr std::size_t kCapacity = std::size_t{1} << kBits;
     static constexpr std::size_t kMask     = kCapacity - 1;
 
+    // Trades, quotes, and bars are separate streams with independent event-time
+    // clocks. Timestamp monotonicity is a *within-stream* property, so each
+    // stream tracks its own last timestamp (a quote can't make a later-arriving
+    // trade with an earlier event time look like a regression). Sequence numbers,
+    // by contrast, are a single per-symbol counter the feed/generator advances
+    // across all types, so gap detection stays shared.
+    enum Stream : std::size_t { kTradeStream = 0, kBarStream, kQuoteStream, kStreamCount };
+
     struct Slot {
         std::uint64_t key      = 0;      // symbol bytes as u64; 0 == empty
-        std::uint64_t last_ts  = 0;
-        std::uint64_t last_seq = 0;
-        bool          seen     = false;
+        std::array<std::uint64_t, kStreamCount> last_ts{};  // per stream; 0 = unseen
+        std::uint64_t last_seq = 0;      // shared per-symbol sequence cursor
+        bool          seen     = false;  // any record seen (for seq-gap gating)
 
         // Price-band EWMA reference. Initialised on the first valid trade; only
         // valid (non-outlier) trades move it. Quote mid checks read but never
@@ -108,10 +116,12 @@ private:
     // is full — a deliberate, observable failure rather than silent corruption.
     Slot* slot_for(const char (&symbol)[model::kSymbolLen]) noexcept;
 
-    // Sequencing check shared by trades and bars; operates on an already-resolved
-    // slot so the hot path does a single table lookup per record.
-    static void check_sequencing(Slot& s, std::uint64_t ts, std::uint64_t seq,
-                                 Result& out) noexcept;
+    // Sequencing check shared by trades, quotes, and bars; operates on an
+    // already-resolved slot so the hot path does a single table lookup per
+    // record. `stream` selects the per-stream timestamp cursor for the
+    // regression check; the sequence-gap check uses the shared cursor.
+    static void check_sequencing(Slot& s, Stream stream, std::uint64_t ts,
+                                 std::uint64_t seq, Result& out) noexcept;
 
     // Price-band check: flags kPriceBandBreach if price deviates from the slot's
     // EWMA reference by more than kPriceBandFrac. On the first call (warmup) the

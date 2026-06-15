@@ -84,11 +84,11 @@ TEST(LiveValidation, CrossedQuoteCaught) {
     EXPECT_TRUE(val.check(to_wire(f.quotes[0], 1U)).has(v::kQuoteCrossed));  // bid > ask
 }
 
-// An Alpaca minute bar's start_ns precedes its trades, and trades+bars share the
-// per-symbol last-timestamp, so the validator flags a regression on the bar.
-// That's a feed/representation artifact — which is exactly why the live report
-// suppresses timestamp regression for bars (next test).
-TEST(LiveValidation, BarAfterTradeRegressesAtValidatorLevel) {
+// A bar carries the minute's START time and arrives after that minute's trades.
+// With per-stream timestamps the bar is compared only against the previous BAR,
+// not the last trade, so an earlier bar.start_ns after a later trade does NOT
+// false-flag. (This used to fire — the bug the per-stream fix removes.)
+TEST(LiveValidation, BarAfterLaterTradeDoesNotRegress) {
     v::Validator        val;
     ohlcv::model::Trade t;
     t.symbol = "AAPL";
@@ -102,15 +102,13 @@ TEST(LiveValidation, BarAfterTradeRegressesAtValidatorLevel) {
     b.trade_count = 1;
     b.start_ns = 1'700'000'000'000'000'000ULL;  // ...:00 — the bar's window start, earlier
     (void)val.check(to_wire(t, 1U));
-    EXPECT_TRUE(val.check(to_wire(b, 2U)).has(v::kTimestampRegression));
+    EXPECT_FALSE(val.check(to_wire(b, 2U)).has(v::kTimestampRegression));
 }
 
-// A quote and a trade are separate streams sharing one per-symbol clock inside
-// the validator: a quote advances last_ts, so a trade with a slightly earlier
-// event time that follows it false-flags regression. This is *why* the live
-// report suppresses timestamp regression for the whole stream (next test) — the
-// report layer can't fix it, because the quote already mutated last_ts.
-TEST(LiveValidation, QuotePollutesSharedTimestampClock) {
+// Trades and quotes are separate streams. A quote advancing its own clock must
+// NOT make a following trade with a slightly earlier event time look like a
+// regression — the per-stream fix is exactly what makes this pass.
+TEST(LiveValidation, QuoteDoesNotPolluteTradeTimestamp) {
     v::Validator        val;
     ohlcv::model::Quote q;
     q.symbol = "AAPL";
@@ -124,7 +122,7 @@ TEST(LiveValidation, QuotePollutesSharedTimestampClock) {
     t.size   = 10;
     t.ts_ns  = 1'700'000'000'400'000'000ULL;     // ...000.400 — earlier event time
     (void)val.check(to_wire(q, 1U));
-    EXPECT_TRUE(val.check(to_wire(t, 2U)).has(v::kTimestampRegression));
+    EXPECT_FALSE(val.check(to_wire(t, 2U)).has(v::kTimestampRegression));
 }
 
 // The report layer surfaces only clock-independent value checks. The

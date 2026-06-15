@@ -53,21 +53,24 @@ Validator::Slot* Validator::slot_for(
     return nullptr;  // table full
 }
 
-void Validator::check_sequencing(Slot& s, std::uint64_t ts, std::uint64_t seq,
-                                 Result& out) noexcept {
-    if (s.seen) {
-        if (ts < s.last_ts) {
-            out.flags |= kTimestampRegression;
-        }
-        // seq should advance by exactly 1; a larger jump means dropped messages.
-        if (seq > s.last_seq + 1) {
-            out.flags |= kSequenceGap;
-            out.gap = seq - s.last_seq - 1;
-        }
+void Validator::check_sequencing(Slot& s, Stream stream, std::uint64_t ts,
+                                 std::uint64_t seq, Result& out) noexcept {
+    // Timestamp regression is per-stream: compare only against the last record
+    // of the *same* type. 0 is the unseen sentinel (no real ts_ns is 0), so the
+    // first record of each stream seeds its cursor without flagging.
+    std::uint64_t& stream_ts = s.last_ts[stream];
+    if (stream_ts != 0 && ts < stream_ts) {
+        out.flags |= kTimestampRegression;
     }
+    stream_ts = ts;
 
+    // Sequence gap is shared per-symbol: seq should advance by exactly 1 across
+    // the merged stream; a larger jump means dropped messages.
+    if (s.seen && seq > s.last_seq + 1) {
+        out.flags |= kSequenceGap;
+        out.gap = seq - s.last_seq - 1;
+    }
     s.seen     = true;
-    s.last_ts  = ts;
     s.last_seq = seq;
 }
 
@@ -140,7 +143,7 @@ Result Validator::check(const model::WireTrade& t) noexcept {
 
     Slot* s = slot_for(t.symbol);
     if (s == nullptr) return r;  // table full — skip stateful checks
-    check_sequencing(*s, t.ts_ns, t.seq, r);
+    check_sequencing(*s, kTradeStream, t.ts_ns, t.seq, r);
 
     // Reconstruct from VALID trades only: a corrupt tick trips its own flag above
     // but is excluded from the bar's aggregate, so the bar reconstructs cleanly
@@ -175,7 +178,7 @@ Result Validator::check(const model::WireBar& b) noexcept {
 
     Slot* s = slot_for(b.symbol);
     if (s == nullptr) return r;  // table full — skip stateful checks
-    check_sequencing(*s, b.start_ns, b.seq, r);
+    check_sequencing(*s, kBarStream, b.start_ns, b.seq, r);
     reconcile(*s, b, r);
     return r;
 }
@@ -197,7 +200,7 @@ Result Validator::check(const model::WireQuote& q) noexcept {
 
     Slot* s = slot_for(q.symbol);
     if (s == nullptr) return r;  // table full — skip stateful checks
-    check_sequencing(*s, q.ts_ns, q.seq, r);
+    check_sequencing(*s, kQuoteStream, q.ts_ns, q.seq, r);
 
     // Quote mid band-check: if a trade reference exists and both sides are
     // positive, flag when the mid deviates beyond the band. Quotes do NOT

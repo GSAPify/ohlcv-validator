@@ -22,12 +22,14 @@ namespace ohlcv::ingest {
 //     volume, so they can't rebuild Alpaca's full-market bars.
 //   - Sequence gaps — the JSON has no feed seq to diff (the live path assigns a
 //     per-symbol monotonic seq, so this is structurally inert).
-//   - Timestamp regression — trades, quotes, and bars are separate streams with
-//     independent event times, merged onto ONE per-symbol last-timestamp inside
-//     the validator. Monotonicity isn't a cross-stream property, so on this
-//     merged live feed the check fires on benign interleaving. (Per-stream
-//     timestamps are a validator-level fix, tracked separately; until then it's
-//     suppressed live rather than reported as false anomalies.)
+//   - Timestamp regression — the validator now tracks a per-stream `last_ts`, so
+//     the old cross-stream false-flagging (a quote advancing one shared clock) is
+//     fixed and the check is *correct*. It stays suppressed live for a different,
+//     narrower reason: it's unverified on real delivery. IEX event timestamps
+//     arrive over a websocket with no monotonic-delivery guarantee, and
+//     same-timestamp / sub-µs-reordered ticks within one stream could flag benign
+//     regressions. Un-suppressing is gated on a live measurement (count how often
+//     it fires on real frames before trusting it) — a separate follow-up.
 
 struct LiveLabel {
     validate::Violation bit;

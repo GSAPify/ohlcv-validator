@@ -125,6 +125,27 @@ TEST(Validator, TimestampRegressionDetected) {
     EXPECT_TRUE(r.has(v::kTimestampRegression));
 }
 
+// Within-stream regression fires for bars too (not just trades).
+TEST(Validator, BarTimestampRegressionDetected) {
+    Validator v;
+    EXPECT_FALSE(v.check(make_bar("AAPL", 1, 5000)).has(v::kTimestampRegression));
+    auto r = v.check(make_bar("AAPL", 2, 4000));  // bar start went backwards
+    EXPECT_TRUE(r.has(v::kTimestampRegression));
+}
+
+// Timestamp monotonicity is a per-stream property: a bar's (earlier) window
+// start arriving after a later trade is NOT a regression — different streams,
+// independent clocks — but a later record going backwards within its own stream
+// still is. This is the per-stream-last_ts contract.
+TEST(Validator, TimestampRegressionIsPerStream) {
+    Validator v;
+    EXPECT_FALSE(v.check(make_trade("AAPL", 1, 9000)).has(v::kTimestampRegression));
+    // Bar with an earlier ts than the last trade: different stream → no flag.
+    EXPECT_FALSE(v.check(make_bar("AAPL", 2, 4000)).has(v::kTimestampRegression));
+    // A later trade going backwards still flags within the trade stream.
+    EXPECT_TRUE(v.check(make_trade("AAPL", 3, 8000)).has(v::kTimestampRegression));
+}
+
 TEST(Validator, SequenceGapDetectedWithCount) {
     Validator v;
     EXPECT_TRUE(v.check(make_trade("AAPL", 10, 1000)).ok());
