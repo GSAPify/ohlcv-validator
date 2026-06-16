@@ -147,6 +147,20 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-16** — validate: **per-stream `last_ts`**. The Slot tracked one
+  `last_ts` per symbol shared across trades/quotes/bars, so a quote (or a bar's
+  window-start) advancing the clock false-flagged a following record of another
+  stream as a timestamp regression. Now each stream tracks its own `last_ts`
+  (`Stream` enum, unseen-sentinel 0); `seq`/gap stays a shared per-symbol cursor
+  (the feed/generator advances it across all types). Timestamp regression is now
+  a correct *within-stream* check — robust for any multi-stream dataset, though
+  no observed binary-path change (the generator emits monotonic-across-type ts;
+  replay still flags 756 injected regressions/run). Tests inverted (cross-stream
+  no longer flags) + within-stream positives for trades, quotes, and bars. Stays
+  suppressed on the live report for the narrower, honest reason that
+  it's unverified on real (possibly bursty/reordered) delivery; un-suppressing is
+  gated on a live measurement. 82 tests; alloc-guard still clean (Slot +16B,
+  still a fixed std::array, zero-heap).
 - **2026-06-13** — concurrent: cached-cursor SPSC variant (`CacheFarCursor`) +
   the measurement that was blocked on the box for days. Caching the far cursor
   (re-read only on full/empty) **raised ring-bound throughput ~30%** (64B
