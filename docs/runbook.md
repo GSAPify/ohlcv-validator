@@ -29,9 +29,13 @@ Alpaca WebSocket ingest (needs `.env` with Alpaca paper keys):
 
 ```sh
 set -a && source .env && set +a
-./build/alpaca_ingest
+./build/alpaca_ingest AAPL                       # one symbol: prints every record
+./build/alpaca_ingest AAPL MSFT NVDA            # many: quiet, violations + summary only
+OHLCV_VIOLATIONS_LOG=violations.jsonl ./build/alpaca_ingest AAPL MSFT  # + structured log
 ```
 
+Symbols are positional args (default `AAPL`). `OHLCV_VIOLATIONS_LOG=path` appends
+each flagged record as a JSONL line (kind/symbol/ts-as-string/seq/checks).
 Each parsed trade/quote/bar is validated inline: a `TRADE`/`QUOTE`/`BAR` line, a
 `!!` line if a (live-meaningful) check fires, and a violation summary on Ctrl+C.
 Quotes carry the order-book checks (crossed/locked, mid-outlier). Outside US
@@ -147,6 +151,15 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-17** — ingest: make the live validator a tool. Symbols are now CLI
+  args (multi-symbol; many symbols → quiet mode, stdout = violations + summary,
+  since per-record prints across N names are a firehose). `OHLCV_VIOLATIONS_LOG`
+  writes flagged records as structured JSONL (`ingest/violation_log.h`): logs only
+  the surfaced checks (mirrors the live `!!` set) and emits 64-bit ns timestamps
+  as JSON *strings* (a ~1.7e18 ns ts exceeds 2^53 and truncates in jq/JS doubles).
+  Also fixed a stale summary note that still blamed the "shared clock" for
+  ts-regression suppression (per-stream `last_ts` fixed that in #10; the real
+  reason now is pending live verification). 87 tests. Off the replay/hot path.
 - **2026-06-16** — validate: **per-stream `last_ts`**. The Slot tracked one
   `last_ts` per symbol shared across trades/quotes/bars, so a quote (or a bar's
   window-start) advancing the clock false-flagged a following record of another
