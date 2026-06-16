@@ -170,6 +170,15 @@ wire types (`src/ingest/to_wire.h`) and validates it as it arrives, printing a
 per-symbol flag inline and a violation summary on exit. So "runs on real data" now
 means it *validates* real data, not merely parses it.
 
+It runs as a tool, not just a demo: symbols are command-line args
+(`alpaca_ingest AAPL MSFT NVDA`; one symbol prints every record, many go quiet and
+show only violations + summary), and setting `OHLCV_VIOLATIONS_LOG=path` writes
+each flagged record as a structured **JSONL** line (`src/ingest/violation_log.h`)
+— machine-readable for downstream tooling (and the eventual feature stream). Two
+schema choices worth noting: it logs only the *surfaced* checks (suppressed ones
+stay out, same as the live `!!` output), and 64-bit nanosecond timestamps are
+emitted as JSON **strings** so `jq`/JS doubles don't silently truncate them.
+
 Quotes carry the order-book checks trades and bars can't express — **crossed**
 (bid > ask) and **locked** (bid == ask) books, non-positive or zero-size sides, and
 **quote-mid outliers** against the per-symbol EWMA reference — and they arrive ~an
