@@ -11,6 +11,7 @@ add_executable(unit_tests
     test_spsc_ring.cpp
     test_live_validation.cpp
     test_violation_log.cpp
+    test_capture_writer.cpp
     ${CMAKE_SOURCE_DIR}/src/ingest/parser.cpp
     ${CMAKE_SOURCE_DIR}/src/validate/validator.cpp
 )
