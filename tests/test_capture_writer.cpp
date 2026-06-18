@@ -59,7 +59,7 @@ TEST(CaptureWriter, RoundTripsThroughReplayFormat) {
     ASSERT_EQ(hdr->record_count, written.size());
 
     const auto* recs =
-        reinterpret_cast<const rp::WireRecord*>(m.base() + sizeof(rp::FileHeader));
+        reinterpret_cast<const rp::WireRecord*>(reinterpret_cast<const rp::FileHeader*>(m.base()) + 1);
     for (std::size_t i = 0; i < written.size(); ++i)
         EXPECT_EQ(std::memcmp(&recs[i], &written[i], sizeof(rp::WireRecord)), 0)
             << "record " << i << " differs after round-trip";
