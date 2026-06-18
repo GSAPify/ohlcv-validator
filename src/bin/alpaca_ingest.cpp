@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -17,6 +18,8 @@
 #include "ingest/parser.h"
 #include "ingest/to_wire.h"
 #include "ingest/violation_log.h"
+#include "replay/binary_format.h"
+#include "replay/capture_writer.h"
 #include "util/timing.h"
 #include "validate/validator.h"
 
@@ -24,6 +27,27 @@ namespace {
 
 namespace v  = ohlcv::validate;
 namespace ig = ohlcv::ingest;
+namespace rp = ohlcv::replay;
+
+// Wrap a typed wire record into the tagged WireRecord the replay format stores.
+rp::WireRecord wrap(const ohlcv::model::WireTrade& t) {
+    rp::WireRecord r{};
+    r.type       = static_cast<std::uint8_t>(rp::RecordType::Trade);
+    r.body.trade = t;
+    return r;
+}
+rp::WireRecord wrap(const ohlcv::model::WireQuote& q) {
+    rp::WireRecord r{};
+    r.type       = static_cast<std::uint8_t>(rp::RecordType::Quote);
+    r.body.quote = q;
+    return r;
+}
+rp::WireRecord wrap(const ohlcv::model::WireBar& b) {
+    rp::WireRecord r{};
+    r.type     = static_cast<std::uint8_t>(rp::RecordType::Bar);
+    r.body.bar = b;
+    return r;
+}
 
 std::atomic<bool> g_stop{false};
 
@@ -62,6 +86,20 @@ int main(int argc, char** argv) {
     if (const char* path = std::getenv("OHLCV_VIOLATIONS_LOG"); path && *path) {
         vlog.open(path, std::ios::app);
         if (!vlog) spdlog::warn("cannot open violations log {}; continuing without it", path);
+    }
+
+    // Optional full-stream capture to the binary replay format, so the live feed
+    // can be replayed/benchmarked offline (and feed the eventual ML training set).
+    // OVERWRITES the target — each run is a fresh dataset.
+    std::unique_ptr<rp::CaptureWriter> capture;
+    if (const char* path = std::getenv("OHLCV_CAPTURE"); path && *path) {
+        capture = std::make_unique<rp::CaptureWriter>(path);
+        if (capture->ok())
+            spdlog::info("capturing the validated stream to {} (overwriting)", path);
+        else {
+            spdlog::warn("cannot open capture file {}; continuing without it", path);
+            capture.reset();
+        }
     }
 
     ohlcv::ingest::AlpacaConfig cfg;
@@ -119,18 +157,21 @@ int main(int argc, char** argv) {
             for (const auto& t : parsed.trades) {
                 if (t.symbol.empty()) continue;  // no symbol → can't key state
                 const std::uint64_t seq = ++next_seq[t.symbol];
-                const auto r = validator.check(ohlcv::ingest::to_wire(t, seq));
+                const auto wt = ohlcv::ingest::to_wire(t, seq);
+                const auto r  = validator.check(wt);
                 ++n_trades;
                 if (verbose)
                     std::cout << "TRADE " << arrival_ns << ' ' << t.symbol
                               << " p=" << t.price << " s=" << t.size
                               << " ts=" << t.ts_ns << '\n';
                 record("trade", t.symbol, t.ts_ns, seq, r.flags);
+                if (capture) capture->write(wrap(wt));
             }
             for (const auto& q : parsed.quotes) {
                 if (q.symbol.empty()) continue;
                 const std::uint64_t seq = ++next_seq[q.symbol];
-                const auto r = validator.check(ohlcv::ingest::to_wire(q, seq));
+                const auto wq = ohlcv::ingest::to_wire(q, seq);
+                const auto r  = validator.check(wq);
                 ++n_quotes;
                 if (verbose)
                     std::cout << "QUOTE " << arrival_ns << ' ' << q.symbol
@@ -138,11 +179,13 @@ int main(int argc, char** argv) {
                               << " a=" << q.ask_price << 'x' << q.ask_size
                               << " ts=" << q.ts_ns << '\n';
                 record("quote", q.symbol, q.ts_ns, seq, r.flags);
+                if (capture) capture->write(wrap(wq));
             }
             for (const auto& b : parsed.bars) {
                 if (b.symbol.empty()) continue;
                 const std::uint64_t seq = ++next_seq[b.symbol];
-                const auto r = validator.check(ohlcv::ingest::to_wire(b, seq));
+                const auto wb = ohlcv::ingest::to_wire(b, seq);
+                const auto r  = validator.check(wb);
                 ++n_bars;
                 if (verbose)
                     std::cout << "BAR   " << arrival_ns << ' ' << b.symbol
@@ -150,6 +193,7 @@ int main(int argc, char** argv) {
                               << " l=" << b.low  << " c=" << b.close
                               << " v=" << b.volume << " vw=" << b.vwap << '\n';
                 record("bar", b.symbol, b.start_ns, seq, r.flags);
+                if (capture) capture->write(wrap(wb));
             }
             for (const auto& e : parsed.errors) {
                 spdlog::error("alpaca error: {}", e);
@@ -165,6 +209,7 @@ int main(int argc, char** argv) {
     }
 
     client.close();
+    if (capture) capture->finalize();  // patch the header's record_count (idempotent)
 
     // Honest summary. A correctness validator on clean vendor data is *supposed*
     // to be quiet — silence here is the result, not a letdown.
@@ -172,6 +217,9 @@ int main(int argc, char** argv) {
               << "validated " << n_trades << " trades, " << n_quotes
               << " quotes, " << n_bars << " bars; " << n_flagged
               << " records flagged\n";
+    if (capture)
+        std::cout << "captured " << capture->count()
+                  << " records to the binary replay format\n";
     for (std::size_t i = 0; i < ig::kLiveLabels.size(); ++i)
         if (counts[i] != 0)
             std::cout << "  " << ig::kLiveLabels[i].text << ": " << counts[i] << '\n';
