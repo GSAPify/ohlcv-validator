@@ -231,6 +231,19 @@ Honest caveats, because the feed shapes what's meaningful:
 Next step: that live measurement — capture real frames and see whether
 within-stream timestamp regression fires on benign jitter before un-suppressing it.
 
+**Resilience.** The first real live run surfaced a concrete gap: on an idle feed
+the read blocked forever and couldn't be interrupted — Beast's client default is
+no idle timeout and no keep-alive pings, so a quiet or silently half-open peer
+parks `read()` indefinitely. The client now sets a finite `idle_timeout` +
+keep-alive pings (dead peers surface as a timeout) and, on any drop, **reconnects
+transparently** — reconnect → re-auth → replay the stored subscription, with
+exponential backoff (`src/util/backoff.h`, the ceiling unit-tested; jitter on
+top). The validation loop is untouched: it just sees the reconnect's ack frames
+again. Honest caveats: the socket reconnect path itself is integration-only (the
+backoff math is the tested part — a local-server drop/reconnect test is the
+follow-up), and interrupting a *live-but-idle* feed instantly still needs the
+deferred async refactor (pings keep an alive connection's read blocked).
+
 ## Build
 
 ```

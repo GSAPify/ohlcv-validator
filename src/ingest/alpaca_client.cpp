@@ -1,7 +1,12 @@
 #include "ingest/alpaca_client.h"
 
+#include <chrono>
 #include <optional>
+#include <random>
 #include <stdexcept>
+#include <thread>
+
+#include "util/backoff.h"
 
 #include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
@@ -59,8 +64,16 @@ void AlpacaClient::connect() {
 
     ws.next_layer().handshake(ssl::stream_base::client);
 
-    ws.set_option(
-        websocket::stream_base::timeout::suggested(beast::role_type::client));
+    // Start from the suggested client timeouts, but give the read a finite
+    // idle_timeout + keep-alive pings. Beast's client default is no idle timeout
+    // (idle_timeout = none, keep_alive_pings = false), so a quiet or half-open
+    // peer blocks read() forever — the exact infinite hang observed live. With
+    // this, a dead peer surfaces as a timeout the read loop turns into a
+    // reconnect; a quiet-but-alive peer pongs the pings and stays up.
+    auto to = websocket::stream_base::timeout::suggested(beast::role_type::client);
+    to.idle_timeout     = config_.idle_timeout;
+    to.keep_alive_pings = true;
+    ws.set_option(to);
     ws.set_option(
         websocket::stream_base::decorator([](websocket::request_type& req) {
             req.set(http::field::user_agent, "ohlcv-validator/0.0.1");
@@ -86,6 +99,17 @@ void AlpacaClient::authenticate() {
 void AlpacaClient::subscribe(const std::vector<std::string>& trades,
                              const std::vector<std::string>& quotes,
                              const std::vector<std::string>& bars) {
+    // Remember the subscription so a reconnect can replay it.
+    sub_trades_ = trades;
+    sub_quotes_ = quotes;
+    sub_bars_   = bars;
+    subscribed_ = true;
+    send_subscribe(trades, quotes, bars);
+}
+
+void AlpacaClient::send_subscribe(const std::vector<std::string>& trades,
+                                  const std::vector<std::string>& quotes,
+                                  const std::vector<std::string>& bars) {
     const json msg = {
         {"action", "subscribe"},
         {"trades", trades},
@@ -97,10 +121,46 @@ void AlpacaClient::subscribe(const std::vector<std::string>& trades,
                  trades.size(), quotes.size(), bars.size());
 }
 
+void AlpacaClient::establish() {
+    // base/cap for the exponential backoff; jitter is applied per attempt.
+    constexpr auto kBase = std::chrono::milliseconds{250};
+    constexpr auto kCap  = std::chrono::milliseconds{30'000};
+    static thread_local std::mt19937 rng{std::random_device{}()};
+
+    for (unsigned attempt = 0;; ++attempt) {
+        try {
+            connect();
+            authenticate();
+            if (subscribed_) send_subscribe(sub_trades_, sub_quotes_, sub_bars_);
+            spdlog::info("reconnected after {} attempt(s)", attempt + 1);
+            return;
+        } catch (const std::exception& e) {
+            const auto ceil = ohlcv::util::backoff_ceiling(attempt, kBase, kCap);
+            // Equal jitter: wait in [ceil/2, ceil] so retries don't synchronise.
+            std::uniform_int_distribution<long long> dist(ceil.count() / 2,
+                                                          ceil.count());
+            const std::chrono::milliseconds delay{dist(rng)};
+            spdlog::warn("reconnect attempt {} failed ({}); retrying in {} ms",
+                         attempt + 1, e.what(), delay.count());
+            std::this_thread::sleep_for(delay);
+        }
+    }
+}
+
 std::string AlpacaClient::read_frame() {
-    beast::flat_buffer buffer;
-    impl_->ws->read(buffer);
-    return beast::buffers_to_string(buffer.data());
+    for (;;) {
+        try {
+            beast::flat_buffer buffer;
+            impl_->ws->read(buffer);
+            return beast::buffers_to_string(buffer.data());
+        } catch (const beast::system_error& e) {
+            if (!config_.auto_reconnect) throw;
+            // Dead/dropped peer (incl. idle_timeout). Re-establish and retry; the
+            // reconnect's ack frames will be returned by subsequent reads.
+            spdlog::warn("read failed ({}); reconnecting", e.code().message());
+            establish();
+        }
+    }
 }
 
 void AlpacaClient::close() {
