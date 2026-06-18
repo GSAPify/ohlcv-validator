@@ -32,10 +32,15 @@ set -a && source .env && set +a
 ./build/alpaca_ingest AAPL                       # one symbol: prints every record
 ./build/alpaca_ingest AAPL MSFT NVDA            # many: quiet, violations + summary only
 OHLCV_VIOLATIONS_LOG=violations.jsonl ./build/alpaca_ingest AAPL MSFT  # + structured log
+OHLCV_CAPTURE=cap.bin ./build/alpaca_ingest AAPL MSFT   # record the stream for replay
+./build/replay_bench cap.bin 1                          # ...then replay it offline
 ```
 
 Symbols are positional args (default `AAPL`). `OHLCV_VIOLATIONS_LOG=path` appends
 each flagged record as a JSONL line (kind/symbol/ts-as-string/seq/checks).
+`OHLCV_CAPTURE=path` records the full validated stream in the binary replay
+format (OVERWRITES the file) so it can be replayed/benchmarked offline — the real
+counterpart to `gen_dataset`'s synthetic data.
 Each parsed trade/quote/bar is validated inline: a `TRADE`/`QUOTE`/`BAR` line, a
 `!!` line if a (live-meaningful) check fires, and a violation summary on Ctrl+C.
 Quotes carry the order-book checks (crossed/locked, mid-outlier). Outside US
@@ -151,6 +156,15 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-18** — replay: **live capture → binary replay** (`replay/capture_writer.h`,
+  `OHLCV_CAPTURE=path` in `alpaca_ingest`). Records the full validated live stream
+  in the same fixed-stride format `gen_dataset` synthesizes, so the benchmark and
+  validator now run on *real captured market data* — the loop `gen_dataset`'s
+  comment said it was standing in for. RAII writer patches the header's
+  record_count on clean shutdown (idempotent finalize; hard-kill caveat
+  documented). Stores real `ts_ns`, synthetic `seq` (replay artifact, not a raw
+  archive). Verified the *real* `replay_bench` ingests a captured file (records/pass
+  matched). 89 tests (round-trip + finalize-idempotent). Off the hot path.
 - **2026-06-17** — ingest: make the live validator a tool. Symbols are now CLI
   args (multi-symbol; many symbols → quiet mode, stdout = violations + summary,
   since per-record prints across N names are a firehose). `OHLCV_VIOLATIONS_LOG`

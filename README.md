@@ -179,6 +179,15 @@ schema choices worth noting: it logs only the *surfaced* checks (suppressed ones
 stay out, same as the live `!!` output), and 64-bit nanosecond timestamps are
 emitted as JSON **strings** so `jq`/JS doubles don't silently truncate them.
 
+Setting `OHLCV_CAPTURE=path` records the full validated stream to the **binary
+replay format** (`src/replay/capture_writer.h`) — the same fixed-stride layout
+`gen_dataset` synthesizes. That closes the loop the README opened: the benchmark
+and validator can now run on *captured real market data*, not just a synthetic
+dataset, and the same file is the raw material for the eventual ML training set.
+(It stores the real `ts_ns` but a synthetic per-symbol `seq`, so it's a replay
+artifact, not a faithful raw-feed archive; a hard kill before clean shutdown
+leaves the header count unpatched.)
+
 Quotes carry the order-book checks trades and bars can't express — **crossed**
 (bid > ask) and **locked** (bid == ask) books, non-positive or zero-size sides, and
 **quote-mid outliers** against the per-symbol EWMA reference — and they arrive ~an
