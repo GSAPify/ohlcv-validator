@@ -151,6 +151,17 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-19** — ingest: **WS read-timeout + transparent reconnect**. The first
+  real live run hung forever on an idle feed (couldn't Ctrl+C) — root cause: Beast's
+  client `timeout::suggested` leaves `idle_timeout = none`, `keep_alive_pings =
+  false`, so a quiet/half-open peer parks `read()` indefinitely (verified in the
+  Beast source). Fix: finite `idle_timeout` + keep-alive pings → dead peers surface
+  as a read timeout, which `read_frame()` turns into a transparent reconnect
+  (connect → auth → replay stored subscription) with exponential backoff
+  (`util/backoff.h`, ceiling unit-tested; equal-jitter on top). Fully inside the
+  client → `alpaca_ingest` unchanged (branched off main). Caveats: socket-reconnect
+  path is integration-only (local-server test = follow-up); instant Ctrl+C on a
+  live-but-idle feed still needs the deferred async refactor. 89 tests.
 - **2026-06-17** — ingest: make the live validator a tool. Symbols are now CLI
   args (multi-symbol; many symbols → quiet mode, stdout = violations + summary,
   since per-record prints across N names are a firehose). `OHLCV_VIOLATIONS_LOG`
