@@ -74,6 +74,14 @@ Single test by name:
 ./build/tests/unit_tests --gtest_filter='Timing.*'
 ```
 
+Reconnect integration test (separate target — links the real client + Boost/
+OpenSSL + a local TLS server; no network, no market). Drops a live connection
+and asserts the client re-establishes:
+
+```sh
+./build/tests/reconnect_test
+```
+
 ## Clean
 
 ```sh
@@ -156,6 +164,15 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-20** — test: **reconnect integration test** (`tests/test_reconnect.cpp`,
+  separate `reconnect_test` target). Stands up a local TLS websocket server,
+  drops a live connection mid-stream, and proves the *unmodified* client
+  re-establishes (reconnect → re-auth → re-subscribe) and resumes — converting
+  #13's socket path from asserted to tested. No Alpaca/network/market: the test
+  trusts the server's self-signed cert via `SSL_CERT_FILE`, so no production code
+  changed. (Prompted by REST recon that day confirming the IEX trade feed is real
+  during RTH — ~57 AAPL / 413 NVDA trades/min — but historical quotes return 0 on
+  the free plan; live quotes TBD Monday.) 92 tests.
 - **2026-06-19** — ingest: **WS read-timeout + transparent reconnect**. The first
   real live run hung forever on an idle feed (couldn't Ctrl+C) — root cause: Beast's
   client `timeout::suggested` leaves `idle_timeout = none`, `keep_alive_pings =
