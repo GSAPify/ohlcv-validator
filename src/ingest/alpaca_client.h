@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -39,6 +40,14 @@ public:
                    const std::vector<std::string>& quotes,
                    const std::vector<std::string>& bars);
 
+    // Point the client at the caller's stop flag (e.g. one set by a signal
+    // handler). When set, read_frame() returns empty instead of reconnecting on a
+    // read failure — so a Ctrl+C on a quiet feed unblocks within idle_timeout and
+    // the caller can shut down cleanly, rather than the reconnect loop spinning
+    // forever (the infinite-hang observed live). The pointee must outlive the
+    // client.
+    void set_stop_flag(const std::atomic<bool>* flag) noexcept { stop_flag_ = flag; }
+
     // Blocking read of one frame. Returns the raw payload as a string. With
     // auto_reconnect on, a dropped/dead connection is re-established (connect →
     // auth → re-subscribe, with exponential backoff) transparently before the
@@ -57,9 +66,16 @@ private:
                         const std::vector<std::string>& quotes,
                         const std::vector<std::string>& bars);
 
+    [[nodiscard]] bool stop_requested() const noexcept {
+        return stop_flag_ != nullptr &&
+               stop_flag_->load(std::memory_order_relaxed);
+    }
+
     AlpacaConfig config_;
     struct Impl;
     std::unique_ptr<Impl> impl_;
+
+    const std::atomic<bool>* stop_flag_ = nullptr;  // caller-owned; may be null
 
     // Last subscription, remembered so a reconnect can replay it.
     std::vector<std::string> sub_trades_, sub_quotes_, sub_bars_;

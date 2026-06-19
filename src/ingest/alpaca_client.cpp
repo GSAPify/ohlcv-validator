@@ -128,6 +128,7 @@ void AlpacaClient::establish() {
     static thread_local std::mt19937 rng{std::random_device{}()};
 
     for (unsigned attempt = 0;; ++attempt) {
+        if (stop_requested()) return;  // shutting down — stop trying to reconnect
         try {
             connect();
             authenticate();
@@ -149,11 +150,18 @@ void AlpacaClient::establish() {
 
 std::string AlpacaClient::read_frame() {
     for (;;) {
+        if (stop_requested()) return {};  // asked to stop before blocking again
         try {
             beast::flat_buffer buffer;
             impl_->ws->read(buffer);
             return beast::buffers_to_string(buffer.data());
         } catch (const beast::system_error& e) {
+            // A pending stop turns the read failure — including the idle_timeout
+            // that fires on a quiet feed — into a clean bail (empty frame) instead
+            // of a reconnect. That's what lets Ctrl+C on an idle feed exit within
+            // idle_timeout and shut down gracefully, rather than spinning the
+            // reconnect loop forever (the infinite hang seen live).
+            if (stop_requested()) return {};
             if (!config_.auto_reconnect) throw;
             // Dead/dropped peer (incl. idle_timeout). Re-establish and retry; the
             // reconnect's ack frames will be returned by subsequent reads.

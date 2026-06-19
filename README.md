@@ -241,8 +241,15 @@ exponential backoff (`src/util/backoff.h`, the ceiling unit-tested; jitter on
 top). The validation loop is untouched: it just sees the reconnect's ack frames
 again. Honest caveats: the socket reconnect path itself is integration-only (the
 backoff math is the tested part — a local-server drop/reconnect test is the
-follow-up), and interrupting a *live-but-idle* feed instantly still needs the
-deferred async refactor (pings keep an alive connection's read blocked).
+follow-up), and interrupting a *live-but-idle* feed still needs the deferred async
+refactor. That last point was confirmed the hard way: a stop-flag checked inside
+`read_frame` doesn't help, because keep-alive pings keep an alive-but-silent
+peer's `read()` blocked forever, so the check is never reached (a live off-hours
+run had to be `kill -9`'d). It's a low-severity, off-hours-only annoyance — during
+regular hours frames keep arriving, so the loop checks the stop flag and Ctrl+C
+lands within a frame. The real fix is `asio::signal_set` driving an `async_read`
+whose in-flight read is cancelled by closing the stream on signal; the stop-flag
+plumbing (`set_stop_flag`) is the prerequisite, parked on `wip/async-shutdown`.
 
 ## Build
 

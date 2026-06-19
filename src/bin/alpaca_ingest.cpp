@@ -107,6 +107,7 @@ int main(int argc, char** argv) {
     cfg.secret_key = require_env("SECRET_ALPACA_API_SECRET");
 
     ohlcv::ingest::AlpacaClient client{std::move(cfg)};
+    client.set_stop_flag(&g_stop);  // Ctrl+C unblocks read_frame on a quiet feed
 
     // Live validation state. The validator is zero-alloc after construction; the
     // per-symbol seq counter stands in for the feed sequence the IEX JSON lacks.
@@ -152,6 +153,7 @@ int main(int argc, char** argv) {
         while (!g_stop.load(std::memory_order_relaxed)) {
             const auto arrival_ns = ohlcv::util::now_ns();
             const auto frame      = client.read_frame();
+            if (frame.empty()) continue;  // idle-timeout / stop sentinel → re-check g_stop
             const auto parsed     = parser.parse(frame);
 
             for (const auto& t : parsed.trades) {
