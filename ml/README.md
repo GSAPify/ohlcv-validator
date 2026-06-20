@@ -68,11 +68,35 @@ live-captured data.**
 rule-clean stream so the *real C++ validator* confirms rule-invisibility, rather
 than us asserting it.
 
-Reinforcement learning is further up the same ladder, not skipped: RL is for
-*sequential decision-making with rewards* (order execution / market-making —
-which is the only thing the paper cites RL for), **not** anomaly detection.
-Conflating the two is a category error. RL also needs exactly the feature stream
-built here, so it comes after, not instead.
+Reinforcement learning is a *separate* track, not a higher anomaly-detection
+rung: RL is for *sequential decision-making with rewards* (position-taking /
+execution), **not** anomaly detection — conflating them is a category error. But
+it consumes the same feature stream, so it lives here too (see below).
+
+## RL sandbox (position-taking)
+
+`rl_env.py` is a position-taking environment over the bar/feature stream —
+gymnasium-style `reset`/`step`, no gymnasium dependency. The agent picks
+{-1 short, 0 flat, +1 long} each bar; reward is `position · forward_return −
+txn_cost · |Δposition|`.
+
+**This is a sandbox — mechanics only.** Synthetic data has no alpha to learn, so
+there's no training loop and no "agent learned to trade" claim. What it *does*
+prove is that the environment has **no lookahead**, shown two ways (`test_rl_env.py`,
+demo `rl_demo.py`):
+
+```
+always_flat            0.0000   (never trades -> exactly zero, by construction)
+random / momentum     ~0        (no edge on i.i.d. returns; costs drag negative)
+clairvoyant (CHEATS)  +1.09     (acts on the forward return -> profits strongly)
+```
+
+A cheating policy profiting proves the reward actually pays for correct bets; the
+obs-only policies *failing* to profit proves no future leaks into the observation.
+If a momentum baseline ever turned strongly positive, that'd be a lookahead leak,
+not a discovery. `from_replay` computes forward returns strictly **within** a
+symbol (never spanning a symbol boundary). A trained agent (DQN/PPO) is a later
+track gated on real data — same discipline as the autoencoder's field eval.
 
 ## ⚠️ The honesty guardrail
 
@@ -95,8 +119,12 @@ on **real captured market data**. Until then, treat every number here as plumbin
 | `autoencoder.py` | rung 3 — MLP autoencoder, reconstruction-error anomaly score (torch) |
 | `detect.py` | CLI: file → features → baseline scores → top anomalies |
 | `eval_ladder.py` | CLI: the rung-0/2/3 head-to-head on the rule-invisible anomaly |
+| `rl_env.py` | RL sandbox — position-taking env over the feature stream (gymnasium-style, no dep) |
+| `rl_policies.py` | baseline policies: always-flat, random, momentum + an episode runner |
+| `rl_demo.py` | CLI: run the baselines + a cheating clairvoyant, print PnL |
 | `test_replay_reader.py` | round-trip test: C++ writes, Python reads, fields match |
 | `test_autoencoder.py` | rung-3 eval: validator silent + baseline blind + autoencoder catches it |
+| `test_rl_env.py` | RL mechanics + the no-lookahead proof (clairvoyant wins, obs-only can't) |
 
 ## Run it
 
@@ -108,6 +136,9 @@ pytest ml/ -v
 
 # the ladder head-to-head: rung 3 catches what the rules + baseline miss
 python3 ml/eval_ladder.py
+
+# the RL sandbox: baselines net ~0 (no alpha), a cheating policy proves no leak
+python3 ml/rl_demo.py
 
 # score a synthetic file with the baseline (plumbing demo — see the guardrail)
 ./build/gen_dataset data/replay.bin 100000

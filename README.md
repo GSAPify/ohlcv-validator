@@ -52,9 +52,11 @@ into NumPy and runs a **model ladder** — a robust-z baseline (rung 2) and an
 autoencoder (rung 3), each rung justified only by beating the one below. The
 autoencoder is shown catching a **rule-invisible** anomaly (a return↔volume
 correlation break) that both the validator and the baseline miss — a mechanism
-demo, not a field-performance claim. See [`ml/README.md`](ml/README.md) for that
-head-to-head and for why the order-book deep-learning literature (Sirignano 2016)
-doesn't fit this feed.
+demo, not a field-performance claim. A separate **position-taking RL sandbox**
+(`ml/rl_env.py`) runs on the same feature stream, with a no-lookahead proof
+(a cheating policy profits; obs-only policies can't) — mechanics only, no trained
+agent. See [`ml/README.md`](ml/README.md) for the head-to-head and for why the
+order-book deep-learning literature (Sirignano 2016) doesn't fit this feed.
 
 ## Benchmark
 
