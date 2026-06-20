@@ -35,8 +35,38 @@ We build the same ladder, shaped to our data:
 |------|------------------------------------|--------|----------------|
 | 1    | data bridge + feature layer        | **here** | — (it's the spine) |
 | 2    | classical baseline (robust z/MAD)  | **here** | yes |
-| 3    | autoencoder reconstruction-error   | future | yes (trade/bar features) |
+| 3    | autoencoder reconstruction-error   | **here** | yes (trade/bar features) |
 | 4    | spatial NN (Sirignano)             | n/a    | **no — needs L3 depth** |
+
+### Rung 3 — and the eval that makes it honest
+
+The autoencoder (`autoencoder.py`) only earns its complexity if it catches
+anomalies the lower rungs **can't**. Testing it on `gen_dataset`'s injected
+defects would be circular — the rule validator and the baseline already catch
+those. So the eval (`test_autoencoder.py`, demo `eval_ladder.py`) builds a
+**rule-invisible** anomaly: a return↔volume *correlation break* (small price move
+on median volume) where every bar passes every validator rule and no single
+feature is an outlier. The whole signal lives in the *joint* structure.
+
+```
+rung 0  C++ validator     : SILENT (rule-clean — verified through replay_bench)
+rung 2  robust-z baseline : flagged 0/15 anomaly bars, AUC 0.21  -> BLIND
+rung 3  autoencoder       : AUC 0.997, anomaly recon-error 12.7x normal -> CATCHES IT
+```
+
+The autoencoder is evaluated **out of sample**: it trains on 70% of normal bars,
+and the head-to-head scores held-out anomaly bars against a held-out normal slice
+(so the "normal" reference error isn't measured on training rows). A univariate
+baseline scores each feature independently — it *structurally cannot* see "volume
+and return decoupled." The autoencoder, trained on the joint distribution of
+normal bars, reconstructs the broken combination poorly. That gap (AUC 0.997 vs
+0.21) is the entire justification for the rung. **This is a mechanism demo on a
+constructed anomaly — not a field-performance claim. Real evaluation needs
+live-captured data.**
+
+`replay_writer.py` (the inverse of the reader) is what lets Python emit the
+rule-clean stream so the *real C++ validator* confirms rule-invisibility, rather
+than us asserting it.
 
 Reinforcement learning is further up the same ladder, not skipped: RL is for
 *sequential decision-making with rewards* (order execution / market-making —
@@ -58,20 +88,28 @@ on **real captured market data**. Until then, treat every number here as plumbin
 | File | What it does |
 |------|--------------|
 | `replay_reader.py` | reads the binary replay format into NumPy structured arrays (byte-precise, mirrors `src/model/wire.h`) |
+| `replay_writer.py` | the inverse — Python emits a valid replay file the C++ validator reads (used to prove rule-invisibility) |
 | `features.py` | per-symbol bar features: returns, range, VWAP deviation, volume, intensity, realized vol, volume z |
-| `baseline.py` | classical robust-z / MAD anomaly baseline — the rung to beat |
-| `detect.py` | CLI: file → features → scores → top anomalies |
+| `baseline.py` | rung 2 — classical robust-z / MAD anomaly baseline, the rung to beat |
+| `synth.py` | generates a rule-clean stream carrying a return↔volume correlation break (the rung-3 eval substrate) |
+| `autoencoder.py` | rung 3 — MLP autoencoder, reconstruction-error anomaly score (torch) |
+| `detect.py` | CLI: file → features → baseline scores → top anomalies |
+| `eval_ladder.py` | CLI: the rung-0/2/3 head-to-head on the rule-invisible anomaly |
 | `test_replay_reader.py` | round-trip test: C++ writes, Python reads, fields match |
+| `test_autoencoder.py` | rung-3 eval: validator silent + baseline blind + autoencoder catches it |
 
 ## Run it
 
 ```bash
-pip install -r ml/requirements.txt
+pip install -r ml/requirements.txt   # numpy; torch only needed for rung 3
 
-# round-trip test (needs the C++ gen_dataset built: cmake --build build)
+# all tests (needs the C++ gen_dataset + replay_bench built: cmake --build build)
 pytest ml/ -v
 
-# score a synthetic file (plumbing demo — see the guardrail above)
+# the ladder head-to-head: rung 3 catches what the rules + baseline miss
+python3 ml/eval_ladder.py
+
+# score a synthetic file with the baseline (plumbing demo — see the guardrail)
 ./build/gen_dataset data/replay.bin 100000
 python3 ml/detect.py data/replay.bin
 
