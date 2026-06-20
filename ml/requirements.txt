@@ -1,5 +1,5 @@
-# ML data plane -- bottom rung. NumPy only, on purpose (cheap-model-first).
-# Heavier deps (torch/sklearn) get added when the autoencoder rung actually
-# needs them, not before.
+# ML data plane. NumPy carries rungs 1-2 (cheap-model-first); torch is only for
+# rung 3 (the autoencoder) and nothing below it imports it.
 numpy>=1.24
-pytest>=7.0  # tests only
+torch>=2.0    # rung 3 (autoencoder) only
+pytest>=7.0   # tests only

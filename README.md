@@ -40,17 +40,21 @@ binary file ──► [decode thread] ──push──► SPSC ring ──pop─
                                           (lock-free,                  ← pipeline
                                            cache-line aware)             (x86)
 
-binary file ──► ml/ (Python) ──► features ──► anomaly baseline ──► scores
-  (same .bin,    NumPy reader     per-symbol    robust-z/MAD        ← ML layer
-   zero-copy)    mirrors wire.h   bar features  (rung to beat)        (offline)
+binary file ──► ml/ (Python) ──► features ──► robust-z baseline ──► scores
+  (same .bin,    NumPy reader     per-symbol     (rung 2)            ← ML layer
+   zero-copy)    mirrors wire.h   bar features ──► autoencoder ──► scores  (offline)
+                                                   (rung 3, torch)
 ```
 
 The C++ side is the fast data plane; `ml/` is an offline Python layer that learns
 from the *same* binary file (no second serialization path). It reads trades+bars
-into NumPy and runs a classical anomaly baseline — deliberately the bottom rung of
-a model ladder, not a deep net. See [`ml/README.md`](ml/README.md) for why the
-order-book deep-learning literature (Sirignano 2016) doesn't fit this feed and
-what does.
+into NumPy and runs a **model ladder** — a robust-z baseline (rung 2) and an
+autoencoder (rung 3), each rung justified only by beating the one below. The
+autoencoder is shown catching a **rule-invisible** anomaly (a return↔volume
+correlation break) that both the validator and the baseline miss — a mechanism
+demo, not a field-performance claim. See [`ml/README.md`](ml/README.md) for that
+head-to-head and for why the order-book deep-learning literature (Sirignano 2016)
+doesn't fit this feed.
 
 ## Benchmark
 
