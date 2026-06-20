@@ -25,3 +25,21 @@ target_link_libraries(unit_tests PRIVATE
 )
 
 gtest_discover_tests(unit_tests)
+
+# Integration test for the WS client's reconnect — links the real client + its
+# Boost/OpenSSL deps + a local TLS server, so it's kept out of the fast unit_tests.
+add_executable(reconnect_test
+    test_reconnect.cpp
+    ${CMAKE_SOURCE_DIR}/src/ingest/alpaca_client.cpp
+)
+target_include_directories(reconnect_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(reconnect_test PRIVATE
+    GTest::gtest_main
+    Boost::headers
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Threads::Threads
+)
+gtest_discover_tests(reconnect_test)
