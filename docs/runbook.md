@@ -164,6 +164,36 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-20** — ml: **RL sandbox — position-taking environment** (`ml/rl_env.py`,
+  `rl_policies.py`, `rl_demo.py`). Gymnasium-style `reset`/`step` (no gym dep) over
+  the bar/feature stream; action {-1,0,+1}, reward `position·fwd_return −
+  txn_cost·|Δposition|`. A *separate track* from the anomaly ladder, not a higher
+  rung (RL = sequential decisions, not anomaly detection). Sandbox mechanics only —
+  no training loop, no "learned to trade" claim (synthetic data has no alpha). The
+  headline is the **no-lookahead proof**: a cheating clairvoyant policy profits
+  (+1.09, proving the reward pays for correct bets) while obs-only baselines net ~0
+  (random/momentum, no edge on i.i.d. returns) — if an obs-only policy turned
+  strongly positive that'd be a leak. `from_replay` computes forward returns
+  strictly within a symbol. 8 tests. Run: `python3 ml/rl_demo.py`.
+- **2026-06-20** — ml: **autoencoder (rung 3) + the eval that justifies it**
+  (`ml/autoencoder.py`, `synth.py`, `replay_writer.py`, `eval_ladder.py`). The
+  honest test of rung 3 is whether it catches what the rules AND the baseline miss
+  — not gen_dataset's injected defects (circular). So `synth.py` builds a
+  **rule-invisible** anomaly: a return↔volume correlation break (small move on
+  median volume) where every bar passes every validator rule and no single feature
+  is an outlier. `replay_writer.py` (inverse of the reader) emits it as a real
+  `.bin` so the **C++ validator confirms 0 violations** — proven, not asserted.
+  Result (out-of-sample): validator SILENT, robust-z baseline BLIND (0/15, AUC
+  0.21), autoencoder CATCHES IT (AUC 0.997, 12.7× recon-error). torch added (rung
+  3 only). Run: `python3 ml/eval_ladder.py`. (Restored: this entry and the one
+  below were dropped in the #15/#16 merge conflict resolution; the code landed.)
+- **2026-06-20** — ml: **data-plane bridge + classical anomaly baseline** (`ml/`).
+  Python layer that reads the *same* binary replay file the C++ benches validate —
+  byte-precise NumPy reader (`replay_reader.py`, mirrors `model/wire.h`; pinned by
+  `static_assert`s on `sizeof(WireRecord)==88` / `WireBar==80` / header==16),
+  per-symbol bar features, and a robust-z/MAD baseline (the rung a model must
+  beat). Motivated by Sirignano (2016), but its spatial NN is off the table — it
+  needs L3 order-book depth we don't capture. NumPy-only, kept out of CMake/ctest.
 - **2026-06-20** — test: **reconnect integration test** (`tests/test_reconnect.cpp`,
   separate `reconnect_test` target). Stands up a local TLS websocket server,
   drops a live connection mid-stream, and proves the *unmodified* client
