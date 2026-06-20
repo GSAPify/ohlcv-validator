@@ -91,12 +91,16 @@ random / momentum     ~0        (no edge on i.i.d. returns; costs drag negative)
 clairvoyant (CHEATS)  +1.09     (acts on the forward return -> profits strongly)
 ```
 
-A cheating policy profiting proves the reward actually pays for correct bets; the
-obs-only policies *failing* to profit proves no future leaks into the observation.
-If a momentum baseline ever turned strongly positive, that'd be a lookahead leak,
-not a discovery. `from_replay` computes forward returns strictly **within** a
-symbol (never spanning a symbol boundary). A trained agent (DQN/PPO) is a later
-track gated on real data — same discipline as the autoencoder's field eval.
+What actually *guarantees* no lookahead is two things: `forward_return[t]` is
+checked directly against the source closes (`test_forward_return_alignment_no_offset`),
+and the features are trailing by construction. The clairvoyant/obs-only pair
+**corroborates** it: the cheating policy profiting proves the reward pays for
+correct bets, and the momentum baseline staying flat rules out the *likeliest*
+leak — `log_return` accidentally being a forward return. (`random` ignores the
+observation entirely, so it's only a sanity floor, not leak evidence.)
+`from_replay` computes forward returns strictly **within** a symbol (never spanning
+a symbol boundary). A trained agent (DQN/PPO) is a later track gated on real data —
+same discipline as the autoencoder's field eval.
 
 ## ⚠️ The honesty guardrail
 

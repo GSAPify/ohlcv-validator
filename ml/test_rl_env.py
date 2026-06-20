@@ -1,15 +1,16 @@
 """Mechanics + no-lookahead proof for the bar-trading sandbox.
 
-The headline isn't "a trading env exists" -- it's that the env has NO lookahead,
-proven (not asserted) by a pair of tests:
+The load-bearing no-lookahead guarantee is test_forward_return_alignment_no_offset
+(forward_return[t] checked directly against the source closes) plus features being
+trailing by construction. The clairvoyant / obs-only pair below CORROBORATES it:
 
   * a clairvoyant policy that cheats (acts on the forward return) MUST profit
-    strongly  -> the reward plumbing actually pays for correct directional bets;
-  * obs-only baselines on i.i.d. synthetic returns MUST net ~zero -> there's no
-    leak letting a normal policy see the future.
-
-If the reward were silently broken, *everyone* would score ~zero and "baselines
-hover near zero" would be false comfort -- so both halves are required.
+    strongly  -> the reward plumbing actually pays for correct directional bets
+    (if it were silently broken, everyone would score ~0 and "baselines hover near
+    zero" would be false comfort);
+  * the momentum baseline staying flat rules out the likeliest leak specifically --
+    log_return accidentally being a forward return. (random ignores the obs, so
+    it's only a sanity floor, not leak evidence.)
 
 The rest are mechanics: exact PnL accounting, txn cost only on position change,
 episode boundary, within-symbol forward returns.

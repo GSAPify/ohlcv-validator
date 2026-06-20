@@ -14,9 +14,11 @@ THE ONE INVARIANT THAT MATTERS -- NO LOOKAHEAD: observation[t] is strictly the
 information available at decision time (bar t and trailing), and forward_return[t]
 is the return realized *after* that decision, close[t+1]/close[t] - 1. If those
 ever line up (forward_return[t] leaking into observation[t]), a trivial policy
-shows fake alpha. test_rl_env.py proves the absence of leakage two ways: a
-cheating clairvoyant policy must profit, and obs-only policies on i.i.d. synthetic
-returns must not.
+shows fake alpha. The guarantee comes from the alignment test (forward_return
+checked directly against source closes) plus features being trailing by
+construction; test_rl_env.py's clairvoyant-wins / obs-only-can't pair corroborates
+it (the momentum baseline specifically rules out log_return being a forward
+return).
 
 Scope: this is a *sandbox* -- mechanics only. On synthetic data there is no alpha
 to learn, so no training loop and no "agent learned to trade" claim lives here.
@@ -112,6 +114,9 @@ def from_replay(data, symbol: str | None = None, txn_cost: float = 1e-4) -> BarT
     sub = bars[syms == symbol]
     if len(sub) < 2:
         raise ValueError(f"symbol {symbol!r} has < 2 bars; can't form a forward return")
+    # Sort to time order before differencing closes. NB: the tests feed
+    # already-sorted bars, so this reorder path itself is not exercised -- it's
+    # belt-and-suspenders for real captures (which arrive in order anyway).
     sub = sub[np.argsort(sub["start_ns"], kind="stable")]
 
     # Features for this symbol only (extract_features groups per symbol; passing a
