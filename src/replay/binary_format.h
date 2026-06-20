@@ -38,4 +38,12 @@ static_assert(std::is_trivially_copyable_v<WireRecord>,
               "WireRecord must be memcpy/mmap-safe");
 static_assert(std::is_trivially_copyable_v<FileHeader>);
 
+// The on-disk contract. These sizes ARE the file format: anything reading the
+// replay file (the C++ mmap path, the Python ML reader in ml/) hardcodes a
+// 16-byte header and an 88-byte record stride. Pin them so a field added to a
+// wire struct fails the build here instead of silently shifting the stride and
+// corrupting every downstream reader.
+static_assert(sizeof(FileHeader) == 16, "replay header is 16 bytes on disk");
+static_assert(sizeof(WireRecord) == 88, "replay record stride is 88 bytes on disk");
+
 }  // namespace ohlcv::replay
