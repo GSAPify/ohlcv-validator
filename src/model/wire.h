@@ -64,5 +64,8 @@ static_assert(std::is_trivially_copyable_v<WireBar>);
 static_assert(std::is_trivially_copyable_v<WireQuote>);
 static_assert(sizeof(WireTrade) == 64, "WireTrade should stay one cache line");
 static_assert(sizeof(WireQuote) == 64, "WireQuote should stay one cache line");
+// WireBar is the largest variant (10 8-byte fields) and so sets the replay
+// record stride; the ml/ Python reader's bar dtype depends on this exact size.
+static_assert(sizeof(WireBar) == 80, "WireBar layout sets the replay stride");
 
 }  // namespace ohlcv::model
