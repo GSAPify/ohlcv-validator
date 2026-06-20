@@ -164,11 +164,12 @@ Date + one line of what changed and why. Newest first.
   median volume) where every bar passes every validator rule and no single feature
   is an outlier. `replay_writer.py` (inverse of the reader) emits it as a real
   `.bin` so the **C++ validator confirms 0 violations** — proven, not asserted.
-  Result: validator SILENT, robust-z baseline BLIND (0/15, AUC 0.21), autoencoder
-  CATCHES IT (AUC 0.99, 8.3× recon-error). That gap is the entire justification
-  for the rung. Mechanism demo on a constructed anomaly — field eval still needs
-  live data. torch added (rung 3 only). 11 Python tests; stacked on the rung-1/2
-  PR. Run: `python3 ml/eval_ladder.py`.
+  Result (autoencoder evaluated out-of-sample — train on 70% of normal, score
+  held-out normal + anomaly): validator SILENT, robust-z baseline BLIND (0/15,
+  AUC 0.21), autoencoder CATCHES IT (AUC 0.997, 12.7× recon-error). That gap is
+  the entire justification for the rung. Mechanism demo on a constructed anomaly —
+  field eval still needs live data. torch added (rung 3 only). 11 Python tests;
+  stacked on the rung-1/2 PR. Run: `python3 ml/eval_ladder.py`.
 - **2026-06-20** — ml: **data-plane bridge + classical anomaly baseline** (`ml/`).
   Python layer that reads the *same* binary replay file the C++ benches validate —
   byte-precise NumPy reader (`replay_reader.py`, mirrors `model/wire.h`; pinned by

@@ -91,10 +91,20 @@ def main() -> int:
     print(f"rung 2  robust-z baseline : flagged {b_flag}/{n_anom} anomaly bars, "
           f"AUC {b_auc:.3f}  -> {'BLIND' if b_auc < 0.75 else 'sees it'}")
 
-    ae = Autoencoder(epochs=400, seed=0).fit(frame.features[~anom].astype(np.float64))
-    err = ae.score(frame.features.astype(np.float64))
-    a_auc = _auc(err, anom)
-    ratio = err[anom].mean() / max(err[~anom].mean(), 1e-12)
+    # Out-of-sample: train on 70% of normal rows, score held-out normal + anomaly.
+    X = frame.features.astype(np.float64)
+    normal_idx = np.where(~anom)[0]
+    perm = np.random.default_rng(0).permutation(normal_idx)
+    cut = int(0.7 * len(perm))
+    train_idx, eval_normal_idx = perm[:cut], perm[cut:]
+    ae = Autoencoder(epochs=400, seed=0).fit(X[train_idx])
+    err = ae.score(X)
+    oos_score = np.concatenate([err[anom], err[eval_normal_idx]])
+    oos_label = np.concatenate([
+        np.ones(anom.sum(), bool), np.zeros(len(eval_normal_idx), bool)
+    ])
+    a_auc = _auc(oos_score, oos_label)
+    ratio = err[anom].mean() / max(err[eval_normal_idx].mean(), 1e-12)
     print(f"rung 3  autoencoder       : AUC {a_auc:.3f}, anomaly recon-error "
           f"{ratio:.1f}x normal  -> {'CATCHES IT' if a_auc > 0.9 else 'misses it'}")
 

@@ -109,21 +109,39 @@ def test_baseline_is_blind(synthetic):
 
 
 def test_autoencoder_beats_both_lower_rungs(synthetic):
-    """The autoencoder, trained on normal bars only, must separate the anomaly
-    cleanly -- and decisively beat the baseline that's blind to it."""
+    """The autoencoder must separate the anomaly cleanly and decisively beat the
+    blind baseline -- evaluated fully OUT OF SAMPLE.
+
+    Both sides of the comparison are held out of training: the anomaly rows
+    (never trained on) AND a held-out slice of normal rows (the normal reference).
+    Training on normal and then measuring the "normal" error on those same rows
+    would be in-sample; this avoids that, so the margin is an honest one.
+    """
     sb, _, frame = synthetic
     anom = sb.is_anomaly
     X = frame.features.astype(np.float64)
 
-    ae = Autoencoder(epochs=400, seed=0).fit(X[~anom])  # train on normal only
+    # 70/30 split of the NORMAL rows: train on 70%, hold out 30% as the normal
+    # reference. Anomaly rows are excluded from training entirely.
+    normal_idx = np.where(~anom)[0]
+    perm = np.random.default_rng(0).permutation(normal_idx)
+    cut = int(0.7 * len(perm))
+    train_idx, eval_normal_idx = perm[:cut], perm[cut:]
+
+    ae = Autoencoder(epochs=400, seed=0).fit(X[train_idx])
     err = ae.score(X)
 
-    ae_auc = _auc(err, anom)
+    # Out-of-sample head-to-head: held-out anomaly vs held-out normal.
+    oos_score = np.concatenate([err[anom], err[eval_normal_idx]])
+    oos_label = np.concatenate([
+        np.ones(anom.sum(), bool), np.zeros(len(eval_normal_idx), bool)
+    ])
+    ae_auc = _auc(oos_score, oos_label)
     base_auc = _auc(score_anomalies(frame, threshold=5.0).score, anom)
 
     assert ae_auc > 0.90, f"autoencoder failed to separate the anomaly (AUC {ae_auc:.3f})"
-    assert err[anom].mean() > 3.0 * err[~anom].mean(), \
-        "anomaly reconstruction error not clearly elevated"
+    assert err[anom].mean() > 3.0 * err[eval_normal_idx].mean(), \
+        "anomaly reconstruction error not clearly elevated over held-out normal"
     # The headline: rung 3 beats rung 2 by a wide margin on this anomaly.
     assert ae_auc - base_auc > 0.20, \
         f"autoencoder ({ae_auc:.3f}) did not clearly beat baseline ({base_auc:.3f})"

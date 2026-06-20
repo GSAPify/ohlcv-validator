@@ -51,15 +51,18 @@ feature is an outlier. The whole signal lives in the *joint* structure.
 ```
 rung 0  C++ validator     : SILENT (rule-clean — verified through replay_bench)
 rung 2  robust-z baseline : flagged 0/15 anomaly bars, AUC 0.21  -> BLIND
-rung 3  autoencoder       : AUC 0.99, anomaly recon-error 8.3x normal -> CATCHES IT
+rung 3  autoencoder       : AUC 0.997, anomaly recon-error 12.7x normal -> CATCHES IT
 ```
 
-A univariate baseline scores each feature independently — it *structurally cannot*
-see "volume and return decoupled." The autoencoder, trained on the joint
-distribution of normal bars, reconstructs the broken combination poorly. That gap
-(AUC 0.99 vs 0.21) is the entire justification for the rung. **This is a mechanism
-demo on a constructed anomaly — not a field-performance claim. Real evaluation
-needs live-captured data.**
+The autoencoder is evaluated **out of sample**: it trains on 70% of normal bars,
+and the head-to-head scores held-out anomaly bars against a held-out normal slice
+(so the "normal" reference error isn't measured on training rows). A univariate
+baseline scores each feature independently — it *structurally cannot* see "volume
+and return decoupled." The autoencoder, trained on the joint distribution of
+normal bars, reconstructs the broken combination poorly. That gap (AUC 0.997 vs
+0.21) is the entire justification for the rung. **This is a mechanism demo on a
+constructed anomaly — not a field-performance claim. Real evaluation needs
+live-captured data.**
 
 `replay_writer.py` (the inverse of the reader) is what lets Python emit the
 rule-clean stream so the *real C++ validator* confirms rule-invisibility, rather
