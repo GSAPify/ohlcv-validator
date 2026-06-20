@@ -39,7 +39,18 @@ binary file ──mmap──► WireRecord ──► Validator ──► through
 binary file ──► [decode thread] ──push──► SPSC ring ──pop──► [validate thread]
                                           (lock-free,                  ← pipeline
                                            cache-line aware)             (x86)
+
+binary file ──► ml/ (Python) ──► features ──► anomaly baseline ──► scores
+  (same .bin,    NumPy reader     per-symbol    robust-z/MAD        ← ML layer
+   zero-copy)    mirrors wire.h   bar features  (rung to beat)        (offline)
 ```
+
+The C++ side is the fast data plane; `ml/` is an offline Python layer that learns
+from the *same* binary file (no second serialization path). It reads trades+bars
+into NumPy and runs a classical anomaly baseline — deliberately the bottom rung of
+a model ladder, not a deep net. See [`ml/README.md`](ml/README.md) for why the
+order-book deep-learning literature (Sirignano 2016) doesn't fit this feed and
+what does.
 
 ## Benchmark
 

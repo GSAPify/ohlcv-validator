@@ -17,6 +17,12 @@ compile_commands.json
 data/
 *.bin
 
+# Python (ml/ data-plane layer)
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
 # Secrets — never commit
 .env
 .env.*
