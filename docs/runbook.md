@@ -74,6 +74,14 @@ Single test by name:
 ./build/tests/unit_tests --gtest_filter='Timing.*'
 ```
 
+Reconnect integration test (separate target — links the real client + Boost/
+OpenSSL + a local TLS server; no network, no market). Drops a live connection
+and asserts the client re-establishes:
+
+```sh
+./build/tests/reconnect_test
+```
+
 ## Clean
 
 ```sh
@@ -156,19 +164,15 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
-- **2026-06-20** — ml: **data-plane bridge + classical anomaly baseline** (`ml/`).
-  Python layer that reads the *same* binary replay file the C++ benches validate —
-  byte-precise NumPy reader (`replay_reader.py`, mirrors `model/wire.h`; pinned by
-  new `static_assert`s on `sizeof(WireRecord)==88` / `WireBar==80` / header==16),
-  per-symbol bar features (returns, range, VWAP dev, volume, intensity, realized
-  vol, volume-z), and a robust-z/MAD baseline — the rung a future autoencoder must
-  beat. Motivated by Sirignano (2016) but **its spatial NN is off the table: it
-  needs L3 order-book depth we don't capture** (we have trades + bars + sparse
-  quotes). RL deferred (it's for execution/decisions, not anomaly detection).
-  Guardrail recorded: on synthetic data the injected defects ARE the anomalies, so
-  this proves the pipeline round-trips, not that detection works — real eval needs
-  a live capture. NumPy-only (cheap-model-first), kept out of CMake/ctest. 8 Python
-  round-trip tests; 91 C++ tests still green. Run: `python3 ml/detect.py data/replay.bin`.
+- **2026-06-20** — test: **reconnect integration test** (`tests/test_reconnect.cpp`,
+  separate `reconnect_test` target). Stands up a local TLS websocket server,
+  drops a live connection mid-stream, and proves the *unmodified* client
+  re-establishes (reconnect → re-auth → re-subscribe) and resumes — converting
+  #13's socket path from asserted to tested. No Alpaca/network/market: the test
+  trusts the server's self-signed cert via `SSL_CERT_FILE`, so no production code
+  changed. (Prompted by REST recon that day confirming the IEX trade feed is real
+  during RTH — ~57 AAPL / 413 NVDA trades/min — but historical quotes return 0 on
+  the free plan; live quotes TBD Monday.) 92 tests.
 - **2026-06-19** — ingest: **WS read-timeout + transparent reconnect**. The first
   real live run hung forever on an idle feed (couldn't Ctrl+C) — root cause: Beast's
   client `timeout::suggested` leaves `idle_timeout = none`, `keep_alive_pings =

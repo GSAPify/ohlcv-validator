@@ -250,10 +250,18 @@ keep-alive pings (dead peers surface as a timeout) and, on any drop, **reconnect
 transparently** — reconnect → re-auth → replay the stored subscription, with
 exponential backoff (`src/util/backoff.h`, the ceiling unit-tested; jitter on
 top). The validation loop is untouched: it just sees the reconnect's ack frames
-again. Honest caveats: the socket reconnect path itself is integration-only (the
-backoff math is the tested part — a local-server drop/reconnect test is the
-follow-up), and interrupting a *live-but-idle* feed instantly still needs the
-deferred async refactor (pings keep an alive connection's read blocked).
+again. The reconnect is **integration-tested**, not just asserted:
+`tests/test_reconnect.cpp` stands up a local TLS websocket server, drops a live
+connection mid-stream, and proves the *unmodified* client re-establishes
+(reconnect → re-auth → re-subscribe) and resumes — no Alpaca, no market hours
+(the test trusts the server's self-signed cert via `SSL_CERT_FILE`, so the client
+needs no test seam). The backoff ceiling is separately unit-tested.
+
+Remaining caveat: interrupting a *live-but-idle* feed instantly still needs the
+deferred async refactor (keep-alive pings keep an alive connection's read blocked,
+so a stop flag checked in `read_frame` is never reached — confirmed live). It's a
+low-severity, off-hours-only annoyance; the fix is `asio::signal_set` cancelling
+the in-flight read on signal.
 
 ## Build
 
