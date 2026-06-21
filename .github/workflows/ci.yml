@@ -1,50 +1,158 @@
 name: CI
 
+# Triggers: every PR, every push to main, and a manual button (workflow_dispatch).
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A new push to the same ref cancels the in-flight run instead of queueing it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# The pipeline is a DAG: `lint` is the fast gate everything fans out from, the
+# build/test jobs run in parallel, and `ci-success` fans them back in as the
+# single required status. (This is what renders as the graph in the Actions tab.)
+#
+#                         ┌─► cpp-test ─────┐
+#                         ├─► cpp-asan-ubsan┤
+#   lint  ────────────────┼─► cpp-tsan ─────┼──► ci-success
+#   (ruff, py compile)    ├─► cpp-linux ────┤    (required check)
+#                         └─► ml-tests ─────┘
 
 jobs:
-  build-and-test:
+  lint:
+    name: Lint · ruff + py-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff (Python ML layer)
+        run: ruff check ml/
+      - name: Every ml/ module compiles
+        run: python -m compileall -q ml
+
+  cpp-test:
+    name: C++ · build + ctest
+    needs: lint
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install build deps
         run: brew install cmake ninja boost simdjson spdlog nlohmann-json googletest
-
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
         run: cmake --build build
-
       - name: Test
         run: ctest --test-dir build --output-on-failure
-
-      - name: Run binary
+      - name: Run timing binary
         run: ./build/ohlcv_validator
 
-  sanitizers:
+  cpp-asan-ubsan:
+    name: C++ · ASan + UBSan
+    needs: lint
     runs-on: macos-latest
     # gtest and simdjson come from brew un-instrumented; mixing them with
     # ASan-built code trips a false-positive container-overflow (gtest_discover_tests
-    # runs the binary at build time). Disable just that check — every other ASan
-    # check stays on.
+    # runs the binary at build time). Disable just that check — everything else stays on.
     env:
       ASAN_OPTIONS: detect_container_overflow=0
     steps:
       - uses: actions/checkout@v4
-
       - name: Install build deps
         run: brew install cmake ninja boost simdjson spdlog nlohmann-json googletest
-
       - name: Configure (ASan + UBSan)
         run: cmake -B build-san -G Ninja -DCMAKE_BUILD_TYPE=Release -DSANITIZER="address;undefined"
-
       - name: Build
         run: cmake --build build-san
-
       - name: Test under ASan + UBSan
         run: UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 ctest --test-dir build-san --output-on-failure
+
+  cpp-tsan:
+    name: C++ · ThreadSanitizer (lock-free ring)
+    needs: lint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: brew install cmake ninja boost simdjson spdlog nlohmann-json googletest
+      - name: Configure (TSan)
+        run: cmake -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Release -DSANITIZER=thread
+      - name: Build ring test + multicore bench
+        run: cmake --build build-tsan --target unit_tests gen_dataset replay_bench_mt
+      # The threaded strict-FIFO ring test is the point: prove acquire/release is
+      # race-free, not just argued.
+      - name: SPSC ring under TSan
+        run: ./build-tsan/tests/unit_tests --gtest_filter='SpscRing.*'
+      - name: Shard-by-symbol multicore under TSan
+        run: |
+          ./build-tsan/gen_dataset /tmp/h.bin 200000 32
+          ./build-tsan/replay_bench_mt /tmp/h.bin 3
+
+  cpp-linux:
+    name: C++ · Linux x86 (pure, no deps)
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The validator/bench/generator are pure C++20 — no Boost/simdjson/spdlog —
+      # so the x86 path builds with just a compiler. This is the host the latency
+      # histogram (rdtscp) and multicore sweep actually run on.
+      - name: Build pure-C++ benches with g++
+        run: |
+          g++ -O3 -march=native -std=c++20 -Isrc src/bin/gen_dataset.cpp -o gen_dataset
+          g++ -O3 -march=native -std=c++20 -Isrc src/bin/replay_bench_rdtsc.cpp src/validate/validator.cpp -o rdtsc_bench
+          g++ -O3 -march=native -std=c++20 -pthread -Isrc src/bin/replay_bench_mt.cpp src/validate/validator.cpp -o bench_mt
+      - name: Smoke (generate → validate → bench)
+        run: |
+          ./gen_dataset data.bin 200000 16
+          taskset -c 0 ./rdtsc_bench data.bin 3
+          ./bench_mt data.bin 5
+
+  ml-tests:
+    name: ML · pytest (ladder + RL)
+    needs: lint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: brew install cmake ninja boost simdjson spdlog nlohmann-json googletest
+      # The ML round-trip tests shell out to the real C++ binaries (gen_dataset
+      # writes a replay file the Python reader parses; replay_bench validates the
+      # rule-clean stream the autoencoder eval emits). Build just those two.
+      - name: Build the C++ binaries the ML tests use
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target gen_dataset replay_bench
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ml/requirements.txt
+      - name: Install Python deps
+        run: pip install -r ml/requirements.txt
+      - name: Run ML tests
+        run: pytest ml/ -v
+
+  ci-success:
+    name: CI Success
+    needs: [lint, cpp-test, cpp-asan-ubsan, cpp-tsan, cpp-linux, ml-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - name: All green
+        run: echo "Every job passed."
