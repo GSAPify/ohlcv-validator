@@ -164,6 +164,17 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-21** — ci: **full pipeline DAG** (`.github/workflows/ci.yml`). Replaced
+  the 2-job workflow with a 7-node graph: a fast `lint` gate (ruff + py-compile)
+  fans out to five parallel jobs — `cpp-test` (build + ctest), `cpp-asan-ubsan`,
+  `cpp-tsan` (the lock-free SPSC ring proven race-free in CI, not just locally),
+  `cpp-linux` (pure-C++ x86 build + gen→validate→bench smoke on ubuntu), and
+  `ml-tests` (builds the C++ binaries the round-trip tests shell out to, then runs
+  all 19 `pytest ml/` tests) — and fans back into a single `ci-success` required
+  gate. Adds concurrency cancellation, manual dispatch, pip caching. The ML layer
+  (ladder + RL) was previously tested nowhere automated; now it can't rot silently.
+  README gains CI + status badges. Every job verified green locally before wiring
+  (ruff clean, TSan ring passes, Linux smoke runs).
 - **2026-06-20** — ml: **RL sandbox — position-taking environment** (`ml/rl_env.py`,
   `rl_policies.py`, `rl_demo.py`). Gymnasium-style `reset`/`step` (no gym dep) over
   the bar/feature stream; action {-1,0,+1}, reward `position·fwd_return −

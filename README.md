@@ -1,5 +1,12 @@
 # ohlcv-validator
 
+[![CI](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
+![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
+![hot path](https://img.shields.io/badge/hot%20path-~6ns%2Frecord-blue)
+![throughput](https://img.shields.io/badge/throughput-~1.0B%20rec%2Fs-blue)
+
 A low-latency C++20 validator for live OHLCV market data feeds.
 
 ## Goal
