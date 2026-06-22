@@ -164,6 +164,17 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-22** — ops: **turnkey capture session script** (`scripts/capture_session.sh`).
+  One command from live feed to baseline scores on real data: sources `.env`,
+  runs `alpaca_ingest` with `OHLCV_CAPTURE` for a bounded window (macOS has no
+  `timeout`, so a watchdog SIGINTs at the deadline for a clean finalize, SIGKILL
+  only as a fallback), then runs `replay_bench` + `ml/detect.py` on the captured
+  file. `scripts/capture_session.sh 300 AAPL MSFT NVDA TSLA`. Off-hours pre-flight
+  confirmed connect/auth/subscribe and graceful empty-file handling; CAVEAT: the
+  clean finalize on a *populated* capture can only be verified during RTH (off
+  hours the idle feed blocks `read()` so SIGINT can't land — the known idle-feed
+  issue — and the watchdog falls through to SIGKILL → empty file). During RTH the
+  active feed makes SIGINT land between frames. First real run: market open tonight.
 - **2026-06-21** — ci: **full pipeline DAG** (`.github/workflows/ci.yml`). Replaced
   the 2-job workflow with a 7-node graph: a fast `lint` gate (ruff + py-compile)
   fans out to five parallel jobs — `cpp-test` (build + ctest), `cpp-asan-ubsan`,
