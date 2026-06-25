@@ -82,6 +82,22 @@ and asserts the client re-establishes:
 ./build/tests/reconnect_test
 ```
 
+Multicast feed handler — demo + integration test (also separate, not in CI:
+multicast isn't guaranteed on runners). The publisher is an "exchange" pushing one
+sequenced stream redundantly on two groups; the handler joins both, arbitrates,
+and validates the reconstructed stream:
+
+```sh
+./build/tests/feed_multicast_test                       # deterministic loopback test
+./build/feed_handler & sleep 0.5 ; ./build/feed_publisher 8000 2 2 ; wait
+# handler prints: delivered (in order), duplicates A/B, gaps (lost on both),
+# max reorder depth, and violations on the reconstructed stream.
+```
+
+The demo's throughput is environment-dependent: a high-rate burst on macOS
+multicast loopback drops at the socket (`netstat -s -p udp` → "dropped due to full
+socket buffers"), so the publisher is paced; reliable on Linux.
+
 ## Clean
 
 ```sh
@@ -164,6 +180,20 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-26** — feed: **UDP multicast transport + demo** (`feed/udp_multicast.h`,
+  `feed_publisher`, `feed_handler`). Wires the #1a arbitrator to real sockets:
+  `feed_publisher` publishes one sequenced stream redundantly to two multicast
+  groups (configurable per-line drop); `feed_handler` joins both, drains them
+  single-threaded (poll + drain-both), arbitrates, validates the reconstructed
+  stream. Deterministic loopback integration test (`tests/test_feed_multicast.cpp`,
+  built but NOT in CI — multicast isn't guaranteed on runners; 10/10 green locally):
+  single-line drop covered by the other line, both-line drop = the one gap. Found
+  + fixed a handler bug (a sleep-poll loop overflowed the socket buffers under
+  burst → tens of thousands of false gaps); busy/poll-first drain fixed it, and the
+  publisher is paced. The live demo's throughput is environment-dependent: high-rate
+  macOS multicast loopback drops at the socket (CONFIRMED via `netstat -s -p udp`:
+  "dropped due to full socket buffers"), reliable on Linux. Run:
+  `./build/feed_handler & ./build/feed_publisher 8000 2 2`.
 - **2026-06-25** — feed: **A/B line arbitration + gap detection core** (`src/feed/`).
   Real exchange feeds publish one sequenced binary stream redundantly on two lines;
   `FeedArbitrator` (`feed/arbitrator.h`, header-only, zero-alloc) reconstructs the
