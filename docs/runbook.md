@@ -192,7 +192,7 @@ Date + one line of what changed and why. Newest first.
   too-old snapshot that would leave a hole. Proven byte-identical: a gapped stream
   recovered via snapshot equals a from-scratch build of the same deltas. L2 (L3
   per-order deferred); control-plane O(levels), not the ns hot path. 12 tests
-  (book core + recovery race + the equality proof) + book on the alloc guard. 113
+  (book core + recovery race + the equality proof, the Live-snapshot guard) + book on the alloc guard. 114
   C++ tests. Attacks gap #3 ("no order book") from the HFT-readiness assessment.
 
 - **2026-06-26** — feed: **UDP multicast transport + demo** (`feed/udp_multicast.h`,

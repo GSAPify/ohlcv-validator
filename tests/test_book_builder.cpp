@@ -135,6 +135,30 @@ TEST(BookBuilder, TooOldSnapshotLeavesAHoleAndIsRejected) {
     EXPECT_TRUE(b.book() == reference(d, 30));
 }
 
+// A stale/periodic snapshot arriving while Live must not clear the book or rewind
+// the sequence -- real feeds push unsolicited refresh snapshots.
+TEST(BookBuilder, StaleSnapshotWhileLiveIsIgnored) {
+    auto d = gen_deltas(20);
+    BookBuilder<64> b;
+    b.on_snapshot(0, std::vector<SnapshotLevel>{});
+    for (std::size_t i = 0; i < 20; ++i) b.on_delta(d[i]);   // Live, expected=21
+    ASSERT_TRUE(b.is_live());
+    const OrderBook<64> before = b.book();
+
+    // A refresh snapshot valid only as of seq 10 -- behind our frontier.
+    b.on_snapshot(10, snapshot_of(reference(d, 10)));
+
+    EXPECT_TRUE(b.is_live());
+    EXPECT_EQ(b.expected_seq(), 21U);          // not rewound to 11
+    EXPECT_TRUE(b.book() == before);           // good book untouched
+
+    // The next live delta (seq 21) still applies cleanly -- no false gap.
+    BookDelta next{21, 99.0, 100, static_cast<std::uint8_t>(Side::Bid), {}};
+    b.on_delta(next);
+    EXPECT_EQ(b.stats().gaps, 0U);
+    EXPECT_EQ(b.expected_seq(), 22U);
+}
+
 TEST(BookBuilder, StaleDuplicateBelowExpectedIsDropped) {
     auto d = gen_deltas(10);
     BookBuilder<64> b;
