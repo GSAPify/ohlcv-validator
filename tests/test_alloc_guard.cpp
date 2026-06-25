@@ -6,6 +6,8 @@
 #include <cstring>
 #include <new>
 
+#include "book/book_builder.h"
+#include "book/book_messages.h"
 #include "feed/arbitrator.h"
 #include "feed/feed_protocol.h"
 #include "validate/validator.h"
@@ -148,5 +150,44 @@ TEST(AllocGuard, ArbitratorHotPathDoesNotAllocate) {
     EXPECT_EQ(g_alloc_count.load(std::memory_order_relaxed), 0U);
     EXPECT_GT(arb.stats().delivered, 0U);
     (void)sink_sum;
+#endif  // OHLCV_ASAN
+}
+
+// The order-book builder's on_delta()/on_snapshot() are also heap-free: the book
+// and the recovery buffer are fixed std::arrays. Exercise the live path, a gap,
+// and a snapshot recovery while counting.
+TEST(AllocGuard, BookBuilderDoesNotAllocate) {
+#if OHLCV_ASAN
+    GTEST_SKIP() << "operator new override conflicts with ASan's allocator";
+#else
+    using ohlcv::book::BookBuilder;
+    using ohlcv::book::BookDelta;
+    using ohlcv::book::Side;
+    using ohlcv::book::SnapshotLevel;
+
+    BookBuilder<64> b;
+    SnapshotLevel snap[2] = {
+        {99.0, 100, static_cast<std::uint8_t>(Side::Bid), {}},
+        {100.0, 100, static_cast<std::uint8_t>(Side::Ask), {}},
+    };
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_counting.store(true, std::memory_order_relaxed);
+
+    b.on_snapshot(0, snap);  // a fixed C array is a valid LevelRange
+    BookDelta d{};
+    for (std::uint64_t seq = 1; seq <= 100'000; ++seq) {
+        d.seq = (seq == 50'000) ? seq + 5 : seq;  // one gap to drive recovery buffering
+        d.side = static_cast<std::uint8_t>((seq & 1) ? Side::Bid : Side::Ask);
+        d.price = (seq & 1) ? 99.0 : 100.0;
+        d.new_size = 100 + (seq % 7);
+        b.on_delta(d);
+        if (seq == 50'010) b.on_snapshot(seq, snap);  // recover from the gap
+    }
+
+    g_counting.store(false, std::memory_order_relaxed);
+
+    EXPECT_EQ(g_alloc_count.load(std::memory_order_relaxed), 0U);
+    EXPECT_GT(b.stats().applied, 0U);
 #endif  // OHLCV_ASAN
 }

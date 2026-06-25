@@ -180,6 +180,21 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-26** — book: **L2 order-book builder + snapshot recovery** (`src/book/`).
+  Builds an aggregated limit order book from a sequenced delta stream — the depth
+  structure OHLCV/top-of-quote can't give. `OrderBook` (zero-alloc, best-at-front
+  levels, crossed/locked observable). `BookBuilder` is the headline: a
+  `Recovering↔Live` state machine making the order book's defining requirement
+  explicit — a lost update invalidates the whole book until a snapshot rebuilds it
+  (where #1a's exact gap detection earns its keep). The load-bearing part is the
+  recovery RACE: a snapshot is "correct as of seq N" while N+1.. are already
+  buffered; recovery discards buffered seq≤N, replays only seq>N, and rejects a
+  too-old snapshot that would leave a hole. Proven byte-identical: a gapped stream
+  recovered via snapshot equals a from-scratch build of the same deltas. L2 (L3
+  per-order deferred); control-plane O(levels), not the ns hot path. 12 tests
+  (book core + recovery race + the equality proof, the Live-snapshot guard) + book on the alloc guard. 114
+  C++ tests. Attacks gap #3 ("no order book") from the HFT-readiness assessment.
+
 - **2026-06-26** — feed: **UDP multicast transport + demo** (`feed/udp_multicast.h`,
   `feed_publisher`, `feed_handler`). Wires the #1a arbitrator to real sockets:
   `feed_publisher` publishes one sequenced stream redundantly to two multicast

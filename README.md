@@ -3,7 +3,7 @@
 [![CI](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![tests](https://img.shields.io/badge/tests-120%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-133%20passing-brightgreen)
 ![hot path](https://img.shields.io/badge/hot%20path-~6ns%2Frecord-blue)
 ![throughput](https://img.shields.io/badge/throughput-~1.0B%20rec%2Fs-blue)
 
@@ -99,6 +99,29 @@ isn't guaranteed on runners) — run it locally. The live demo's *throughput* is
 environment-dependent: a high-rate burst on macOS multicast loopback shows
 nondeterministic socket-level loss (confirmed via `netstat -s -p udp`: "dropped
 due to full socket buffers"), so the publisher is paced; on Linux it's reliable.
+
+### Order book — L2 builder with snapshot recovery
+
+`src/book/` builds an aggregated (L2) limit order book from a sequenced delta
+stream — the structure real strategies (and the order-book ML literature) operate
+on, the thing OHLCV/top-of-quote can't give you. `OrderBook` keeps the best levels
+per side (zero-alloc, best-at-front); `BookBuilder` is the part that matters: a
+`Recovering ↔ Live` state machine that makes the order book's defining hard
+requirement explicit — **a lost update invalidates the whole book until a snapshot
+rebuilds it** (a trade stream tolerates a skipped sequence; a book can't, because
+every delta mutates state later deltas depend on). This is where #1a's exact gap
+detection earns its keep.
+
+The subtle, load-bearing part is the **recovery race**: a snapshot is generated
+asynchronously while deltas keep flowing, so it's "correct as of seq N" while you
+may have already buffered N+1…N+5. Correct recovery discards buffered deltas with
+seq ≤ N (already in the snapshot) and replays only seq > N — re-applying one
+double-counts, dropping one leaves a hole — and rejects a too-old snapshot that
+can't close the gap, waiting for a newer one rather than building a corrupt book.
+The proof isn't a label: a test reconstructs a gapped stream via snapshot recovery
+and asserts the result is **byte-identical** to a from-scratch build of the same
+deltas. (L2 here; L3 per-order is a follow-up. Book building is the control plane,
+so the level bookkeeping is O(levels), not the ns hot path — deliberately.)
 
 ## Benchmark
 
