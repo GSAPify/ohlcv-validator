@@ -44,3 +44,13 @@ target_link_libraries(reconnect_test PRIVATE
     Threads::Threads
 )
 gtest_discover_tests(reconnect_test)
+
+# Loopback-multicast integration test for the feed transport (#1b). Built but
+# deliberately NOT gtest_discover'd, so it is NOT in the default ctest/CI run:
+# multicast isn't guaranteed on CI runners. Run it locally:
+#   ./build/tests/feed_multicast_test
+add_executable(feed_multicast_test
+    test_feed_multicast.cpp
+)
+target_include_directories(feed_multicast_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(feed_multicast_test PRIVATE GTest::gtest_main Threads::Threads)

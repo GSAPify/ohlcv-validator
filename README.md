@@ -84,10 +84,21 @@ contiguous prefix), and its power-of-two seq-indexed ring stores and validates t
 sequence per slot so a far-ahead jump can't alias a live message. Zero-alloc on
 the packet path (alloc-guard tested), payload is the same `WireRecord`. This is
 arbitration + gap *detection*, not recovery — a detected gap is the hook where a
-real system requests a retransmit or replays a snapshot; the **UDP multicast
-transport is a follow-up**, and the gap signal is what the order-book builder
-(next) needs, since a book is invalid until snapshot recovery while a trade stream
-tolerates a skip.
+real system requests a retransmit or replays a snapshot; the gap signal is what
+the order-book builder (next) needs, since a book is invalid until snapshot
+recovery while a trade stream tolerates a skip.
+
+The **multicast transport** wires this to real sockets (`feed/udp_multicast.h`):
+`feed_publisher` is an "exchange" publishing one sequenced stream redundantly to
+two multicast groups (with configurable per-line drop), and `feed_handler` joins
+both, drains them single-threaded, arbitrates, and validates the reconstructed
+stream. Proven by a deterministic loopback integration test
+(`tests/test_feed_multicast.cpp`, single-line drop covered by the other line; a
+both-line drop is the one gap). The test is built but kept out of CI (multicast
+isn't guaranteed on runners) — run it locally. The live demo's *throughput* is
+environment-dependent: a high-rate burst on macOS multicast loopback shows
+nondeterministic socket-level loss (confirmed via `netstat -s -p udp`: "dropped
+due to full socket buffers"), so the publisher is paced; on Linux it's reliable.
 
 ## Benchmark
 

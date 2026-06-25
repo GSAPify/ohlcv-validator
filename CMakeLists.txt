@@ -129,5 +129,19 @@ add_executable(replay_bench_spsc
 target_include_directories(replay_bench_spsc PRIVATE src)
 target_link_libraries(replay_bench_spsc PRIVATE Threads::Threads)
 
+# Multicast feed demo: an "exchange" publishing one sequenced stream redundantly
+# on two groups (A/B), and a handler that joins both, arbitrates them through
+# FeedArbitrator, and validates the reconstructed stream. Pure POSIX sockets.
+add_executable(feed_publisher
+    src/bin/feed_publisher.cpp
+)
+target_include_directories(feed_publisher PRIVATE src)
+
+add_executable(feed_handler
+    src/bin/feed_handler.cpp
+    src/validate/validator.cpp
+)
+target_include_directories(feed_handler PRIVATE src)
+
 enable_testing()
 add_subdirectory(tests)
