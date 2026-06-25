@@ -62,10 +62,11 @@ def main() -> int:
               f"{scored.score[i]:>8.2f}  {scored.worst_feature[i]}")
 
     print()
-    print("NOTE: on synthetic gen_dataset data the injected defects ARE the "
-          "anomalies and\nthe rule validator already flags them -- this shows the "
-          "pipeline runs, not that\nanomaly detection works. Real evaluation needs "
-          "live-captured data.")
+    print("NOTE: high scores are statistical OUTLIERS, not validated anomalies, and"
+          "\nthere are no ground-truth labels here. On real data the tails are"
+          "\ntypically session-boundary effects (open, close, thin pre/post-market);"
+          "\non synthetic gen_dataset data the injected defects dominate. Investigate"
+          "\nbefore trusting any single flag.")
     return 0
 
 
