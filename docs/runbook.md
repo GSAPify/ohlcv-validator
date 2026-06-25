@@ -164,6 +164,21 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-25** — feed: **A/B line arbitration + gap detection core** (`src/feed/`).
+  Real exchange feeds publish one sequenced binary stream redundantly on two lines;
+  `FeedArbitrator` (`feed/arbitrator.h`, header-only, zero-alloc) reconstructs the
+  true stream — delivers each seq exactly once in order (whichever line is first),
+  detects gaps lost on both lines. Gets the two pillars right: doesn't cry gap on
+  mere reordering (buffers a power-of-two reorder window, releases the contiguous
+  prefix; gap only on window overflow or explicit flush), and stores+validates the
+  seq per ring slot so a far-ahead jump can't alias a live message. Payload reuses
+  the 88-byte `WireRecord` (`FeedPacket = seq + line + WireRecord`). DETECTION not
+  recovery (a gap is the retransmit/snapshot hook); UDP multicast transport +
+  publisher/handler demo = follow-up (#1b), order-book builder = #2 (the gap signal
+  feeds it: a book is invalid until snapshot recovery). 9 new tests incl. the two
+  that matter (dup-below-frontier dropped; far-ahead jump → gap, no aliasing) +
+  arbitrator zero-alloc in the alloc guard. 101 C++ tests. Highest-leverage of the
+  three "push it closer to HFT" moves; built core-first (multicast on CI is flaky).
 - **2026-06-22** — ops: **turnkey capture session script** (`scripts/capture_session.sh`).
   One command from live feed to baseline scores on real data: sources `.env`,
   runs `alpaca_ingest` with `OHLCV_CAPTURE` for a bounded window (macOS has no

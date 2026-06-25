@@ -9,6 +9,7 @@ add_executable(unit_tests
     test_histogram.cpp
     test_alloc_guard.cpp
     test_spsc_ring.cpp
+    test_arbitrator.cpp
     test_live_validation.cpp
     test_violation_log.cpp
     test_backoff.cpp
