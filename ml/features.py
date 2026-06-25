@@ -32,6 +32,13 @@ from replay_reader import ReplayData, symbols
 # bars; small enough to react, long enough for a stable estimate.
 DEFAULT_WINDOW = 60
 
+# A return is only meaningful between *consecutive* bars. Anything past this gap
+# (overnight, a halt, or a missing-data hole) is a session break, not a 1-minute
+# move. 1-min bars are normally 60s apart; 5 min tolerates minor irregularity
+# while catching the ~17h overnight gap that real multi-day data exposed (a gap
+# the single-series synthetic data never produced).
+SESSION_GAP_NS = 5 * 60 * 1_000_000_000
+
 FEATURE_NAMES = (
     "log_return",
     "hl_range",
@@ -104,6 +111,14 @@ def _features_for_symbol(bars: np.ndarray, window: int) -> np.ndarray:
     cur = close[1:]
     safe = (prev > 0) & (cur > 0)
     log_return[1:][safe] = np.log(cur[safe] / prev[safe])
+
+    # Session awareness: zero the return across any gap > SESSION_GAP_NS, so the
+    # first bar of a session doesn't book a multi-hour overnight move as a 1-min
+    # return. This propagates into realized_vol (rolling std of the return) too.
+    ts = bars["start_ns"].astype(np.int64)
+    session_break = np.zeros(n, dtype=bool)
+    session_break[1:] = np.diff(ts) > SESSION_GAP_NS
+    log_return[session_break] = 0.0
 
     hl_range = np.divide(high - low, close, out=np.zeros(n), where=close > 0)
     vwap_dev = np.divide(close - vwap, vwap, out=np.zeros(n), where=vwap > 0)
