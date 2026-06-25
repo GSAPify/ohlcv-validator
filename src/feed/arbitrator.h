@@ -54,9 +54,16 @@ class FeedArbitrator {
 public:
     struct Stats {
         std::uint64_t delivered     = 0;     // messages released, in order
-        std::uint64_t duplicates[2] = {0, 0};// per-line copies of an already-seen seq
+        // Per-line copies of a sequence at/below the frontier. This lumps three
+        // cases: a genuine redundant copy from the other line; a pre-anchor late
+        // arrival; and a copy that arrives *after* its seq was already gapped (a
+        // late recovery that missed the window -- see the window-skew test).
+        std::uint64_t duplicates[2] = {0, 0};
         std::uint64_t gaps          = 0;     // sequences declared lost on both lines
-        std::uint64_t max_reorder   = 0;     // deepest a seq sat ahead of the frontier
+        // Deepest a seq sat ahead of the frontier. If this approaches Window, the
+        // reorder window is too small for the inter-line skew and real recoveries
+        // will be missed (false gaps) -- the signal to size Window up.
+        std::uint64_t max_reorder   = 0;
     };
 
     // Offer one received packet. Every message that becomes deliverable (the

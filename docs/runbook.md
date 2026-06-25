@@ -175,9 +175,9 @@ Date + one line of what changed and why. Newest first.
   the 88-byte `WireRecord` (`FeedPacket = seq + line + WireRecord`). DETECTION not
   recovery (a gap is the retransmit/snapshot hook); UDP multicast transport +
   publisher/handler demo = follow-up (#1b), order-book builder = #2 (the gap signal
-  feeds it: a book is invalid until snapshot recovery). 8 new tests incl. the two
+  feeds it: a book is invalid until snapshot recovery). 9 new tests incl. the two
   that matter (dup-below-frontier dropped; far-ahead jump → gap, no aliasing) +
-  arbitrator zero-alloc in the alloc guard. 100 C++ tests. Highest-leverage of the
+  arbitrator zero-alloc in the alloc guard. 101 C++ tests. Highest-leverage of the
   three "push it closer to HFT" moves; built core-first (multicast on CI is flaky).
 - **2026-06-22** — ops: **turnkey capture session script** (`scripts/capture_session.sh`).
   One command from live feed to baseline scores on real data: sources `.env`,

@@ -127,6 +127,37 @@ TEST(Arbitrator, DuplicateBelowFrontierIsDroppedNotRedelivered) {
     EXPECT_EQ(arb.stats().duplicates[1], 1U);
 }
 
+// The defining operational tradeoff of A/B arbitration: the reorder window must
+// be larger than the inter-line skew. If line A races ahead while line B's copies
+// are still in flight, a window smaller than that skew declares a FALSE gap -- B
+// had the data, it just arrived after the window forced the frontier past it.
+TEST(Arbitrator, WindowSmallerThanLineSkewCausesFalseGap) {
+    // A delivers 0 then jumps to 5; B carries 1..4 but lagging, arriving only
+    // after 5. Window 4 < the skew -> the hole at 1 is declared a gap before B's
+    // copy of 1 lands, and that copy then falls below the frontier.
+    FeedArbitrator<4> small;
+    Collector cs;
+    small.offer(mk(0, Line::A), cs);
+    small.offer(mk(5, Line::A), cs);                 // forces frontier past 1
+    for (std::uint64_t s = 1; s <= 4; ++s) small.offer(mk(s, Line::B), cs);
+    small.flush(cs);
+    EXPECT_GT(small.stats().gaps, 0U);               // false gap: B HAD it
+    EXPECT_GE(small.stats().max_reorder, 3U);        // near Window=4 -> "size up" signal
+    EXPECT_TRUE(cs.consistent());
+
+    // Identical arrivals, a window comfortably larger than the skew -> no gap,
+    // full in-order delivery. Same data, right-sized window, different outcome.
+    FeedArbitrator<16> big;
+    Collector cb;
+    big.offer(mk(0, Line::A), cb);
+    big.offer(mk(5, Line::A), cb);
+    for (std::uint64_t s = 1; s <= 4; ++s) big.offer(mk(s, Line::B), cb);
+    big.flush(cb);
+    EXPECT_EQ(big.stats().gaps, 0U);
+    EXPECT_EQ(cb.seqs(), (std::vector<std::uint64_t>{0, 1, 2, 3, 4, 5}));
+    EXPECT_TRUE(cb.consistent());
+}
+
 // Advisor test (b): a sequence far past the window forces a gap and is delivered
 // without aliasing/corruption -- the seq-validated ring's reason to exist.
 TEST(Arbitrator, FarAheadJumpForcesGapNoAliasing) {
