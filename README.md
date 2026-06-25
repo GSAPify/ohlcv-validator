@@ -3,7 +3,7 @@
 [![CI](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-119%20passing-brightgreen)
 ![hot path](https://img.shields.io/badge/hot%20path-~6ns%2Frecord-blue)
 ![throughput](https://img.shields.io/badge/throughput-~1.0B%20rec%2Fs-blue)
 
@@ -35,6 +35,11 @@ The decisions matter more than the feature list:
 replay path.
 
 ```
+line A ┐                                                  exchange-style feed:
+line B ┴► FeedArbitrator ──► WireRecord ──► Validator      A/B arbitration, in-order
+  (seq'd packets,  dedup, in-order release,               release, gap detection
+   redundant)      gap detection (zero-alloc)             ← "real feeds" path
+
 Alpaca IEX ──ws──► parse ──► [→ Wire] ──► Validator ──► live violation report
                                                           ← runs on real ticks
                                                             (validates, not just parses)
@@ -64,6 +69,25 @@ demo, not a field-performance claim. A separate **position-taking RL sandbox**
 (a cheating policy profits; obs-only policies can't) — mechanics only, no trained
 agent. See [`ml/README.md`](ml/README.md) for the head-to-head and for why the
 order-book deep-learning literature (Sirignano 2016) doesn't fit this feed.
+
+### Feed handler — A/B arbitration + gap detection
+
+Real exchange feeds aren't a single WebSocket: the venue publishes one
+sequence-numbered binary stream redundantly on two lines (A and B) over UDP
+multicast, and the receiver must reconstruct the true stream. `src/feed/` is that
+core: `FeedArbitrator` (`feed/arbitrator.h`) consumes sequenced packets from both
+lines and **delivers every sequence exactly once, strictly in order**, taking
+whichever line is first, while **detecting genuine gaps** (a sequence lost on
+*both* lines). It gets the two things a naïve handler botches right: it doesn't
+declare a gap on mere reordering (it buffers a reorder window and releases the
+contiguous prefix), and its power-of-two seq-indexed ring stores and validates the
+sequence per slot so a far-ahead jump can't alias a live message. Zero-alloc on
+the packet path (alloc-guard tested), payload is the same `WireRecord`. This is
+arbitration + gap *detection*, not recovery — a detected gap is the hook where a
+real system requests a retransmit or replays a snapshot; the **UDP multicast
+transport is a follow-up**, and the gap signal is what the order-book builder
+(next) needs, since a book is invalid until snapshot recovery while a trade stream
+tolerates a skip.
 
 ## Benchmark
 

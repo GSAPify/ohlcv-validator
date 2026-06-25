@@ -6,6 +6,8 @@
 #include <cstring>
 #include <new>
 
+#include "feed/arbitrator.h"
+#include "feed/feed_protocol.h"
 #include "validate/validator.h"
 
 // This test overrides global operator new, which is fundamentally incompatible
@@ -101,5 +103,50 @@ TEST(AllocGuard, HotPathDoesNotAllocate) {
 
     EXPECT_EQ(g_alloc_count.load(std::memory_order_relaxed), 0U);
     EXPECT_EQ(sink, 0U) << "clean stream should produce no violations";
+#endif  // OHLCV_ASAN
+}
+
+// The feed arbitrator's offer()/flush() are on the per-packet hot path; like the
+// validator they must never touch the heap. The reorder window is a fixed
+// std::array of POD slots, the sink is a non-allocating lambda, and offer() is
+// templated on it (no std::function). Same counting trick as above.
+TEST(AllocGuard, ArbitratorHotPathDoesNotAllocate) {
+#if OHLCV_ASAN
+    GTEST_SKIP() << "operator new override conflicts with ASan's allocator";
+#else
+    using ohlcv::feed::FeedArbitrator;
+    using ohlcv::feed::FeedPacket;
+    using ohlcv::feed::Line;
+    using ohlcv::replay::RecordType;
+    using ohlcv::replay::WireRecord;
+
+    FeedArbitrator<256> arb;            // window built before the counted region
+    std::uint64_t sink_sum = 0;
+    auto sink = [&sink_sum](std::uint64_t seq, const WireRecord& r) {
+        sink_sum += seq + r.body.trade.trade_id;
+    };
+
+    FeedPacket pkt{};
+    pkt.record.type = static_cast<std::uint8_t>(RecordType::Trade);
+
+    g_alloc_count.store(0, std::memory_order_relaxed);
+    g_counting.store(true, std::memory_order_relaxed);
+
+    // In-order, with periodic reordering (swap each pair) and a redundant B copy
+    // every few packets, so the buffering, release, and dedup paths all run.
+    for (std::uint64_t n = 0; n < 100'000; ++n) {
+        const std::uint64_t seq = (n % 2 == 0) ? n + 1 : n - 1;  // local reorder
+        pkt.seq = seq;
+        pkt.line = static_cast<std::uint8_t>((n % 3 == 0) ? Line::B : Line::A);
+        pkt.record.body.trade.trade_id = seq;
+        arb.offer(pkt, sink);
+    }
+    arb.flush(sink);
+
+    g_counting.store(false, std::memory_order_relaxed);
+
+    EXPECT_EQ(g_alloc_count.load(std::memory_order_relaxed), 0U);
+    EXPECT_GT(arb.stats().delivered, 0U);
+    (void)sink_sum;
 #endif  // OHLCV_ASAN
 }
