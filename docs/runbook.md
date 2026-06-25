@@ -164,30 +164,21 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
-- **2026-06-25** — ml: **REAL data, via REST historical** (`ml/fetch_history.py`).
-  Live capture missed 3 RTH windows (US 19:00–01:30 IST never lined up with being
-  at the machine; the session-only cron can't fire when Claude isn't running), so
-  pivoted off live timing: pull a recent session's 1-min bars over Alpaca REST
-  (works any hour) → write to the binary replay format → run the whole pipeline on
-  real data. Fetched 3 sessions (Jun 22–24) × {AAPL,MSFT,NVDA,TSLA} = 4721 real
-  bars. The data plane runs end-to-end on REAL data (fetch → binary → validator →
-  features → baseline/AE). FINDINGS, stated carefully: (1) C++ validator = 0
-  violations — real exchange bars are well-formed. (2) BUG real data exposed:
-  `features.py` returns aren't session-aware, so the first bar of each session
-  scores a ~17h overnight move as a 1-min return — the 3 biggest log_return flags
-  (NVDA/TSLA/MSFT, >34σ) are this artifact (predecessor 16–17h earlier). Synthetic
-  (one continuous series) couldn't surface it. Minor in volume (only 29/579 flags
-  follow a >5min gap) but wrong on its own terms → fix = session-aware returns
-  (follow-up PR). (3) The ~12% flag rate at 5σ is NOT a finding about the data —
-  it's THRESHOLD MISCALIBRATION: a Gaussian-calibrated 1.4826·MAD scale + 5σ cutoff
-  assumes a normality minute-bar data violates, so 5.0 over-flags fat tails. Fix =
-  set the threshold from the data's own tail (empirical quantile), not textbook
-  sigma. (4) baseline-vs-AE comparison DEFERRED (the 25/50 top-50 overlap is
-  uninterpretable until returns are clean AND the threshold is recalibrated — don't
-  report it as a result yet). Infra bug found+fixed: `np.concatenate` re-packs the
-  structured dtype to an 81-byte stride (the writer's size guard caught it); fill a
-  pre-allocated DT_BAR array instead. Quotes still 0 on free IEX. `detect.py`
-  footer corrected (was synthetic-only).
+- **2026-06-25** — feed: **A/B line arbitration + gap detection core** (`src/feed/`).
+  Real exchange feeds publish one sequenced binary stream redundantly on two lines;
+  `FeedArbitrator` (`feed/arbitrator.h`, header-only, zero-alloc) reconstructs the
+  true stream — delivers each seq exactly once in order (whichever line is first),
+  detects gaps lost on both lines. Gets the two pillars right: doesn't cry gap on
+  mere reordering (buffers a power-of-two reorder window, releases the contiguous
+  prefix; gap only on window overflow or explicit flush), and stores+validates the
+  seq per ring slot so a far-ahead jump can't alias a live message. Payload reuses
+  the 88-byte `WireRecord` (`FeedPacket = seq + line + WireRecord`). DETECTION not
+  recovery (a gap is the retransmit/snapshot hook); UDP multicast transport +
+  publisher/handler demo = follow-up (#1b), order-book builder = #2 (the gap signal
+  feeds it: a book is invalid until snapshot recovery). 9 new tests incl. the two
+  that matter (dup-below-frontier dropped; far-ahead jump → gap, no aliasing) +
+  arbitrator zero-alloc in the alloc guard. 101 C++ tests. Highest-leverage of the
+  three "push it closer to HFT" moves; built core-first (multicast on CI is flaky).
 - **2026-06-22** — ops: **turnkey capture session script** (`scripts/capture_session.sh`).
   One command from live feed to baseline scores on real data: sources `.env`,
   runs `alpaca_ingest` with `OHLCV_CAPTURE` for a bounded window (macOS has no
