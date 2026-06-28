@@ -171,3 +171,20 @@ TEST(Arbitrator, FarAheadJumpForcesGapNoAliasing) {
     EXPECT_EQ(arb.stats().delivered, 2U);
     EXPECT_EQ(arb.stats().gaps, 99U);  // seqs 1..99 all declared lost
 }
+
+// A corrupt datagram with a wild sequence (FeedPacket is cast straight off the
+// wire) must NOT spin the forced-advance loop ~2^63 times, and must NOT hijack
+// the frontier -- the real stream has to keep flowing afterward.
+TEST(Arbitrator, WildSequenceIsRejectedWithoutDesync) {
+    FeedArbitrator<8> arb;
+    Collector c;
+    arb.offer(mk(0, Line::A), c);                          // delivered, frontier -> 1
+    arb.offer(mk(std::uint64_t{1} << 62, Line::A), c);     // corrupt: must return promptly
+    EXPECT_EQ(arb.stats().rejected, 1U);
+    EXPECT_EQ(arb.stats().gaps, 0U);                       // not millions of false gaps
+    // The handler is NOT desynced: the next real packet still delivers in order.
+    arb.offer(mk(1, Line::A), c);
+    arb.offer(mk(2, Line::A), c);
+    EXPECT_EQ(c.seqs(), (std::vector<std::uint64_t>{0, 1, 2}));
+    EXPECT_TRUE(c.consistent());
+}

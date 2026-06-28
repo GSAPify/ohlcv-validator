@@ -83,7 +83,7 @@ public:
         // (its as_of is already behind our frontier) -- a stale refresh must not
         // clear a good book or rewind the sequence. (Forward resync while Live is
         // deferred; the recovery flow always enters from Recovering.)
-        if (state_ == State::Live && as_of_seq + 1 <= expected_) return;
+        if (state_ == State::Live && as_of_seq < expected_) return;
 
         // First, prove the buffered increments past the snapshot are contiguous
         // from as_of+1 -- otherwise the snapshot is too old to close the gap and
