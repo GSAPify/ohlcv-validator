@@ -106,8 +106,12 @@ correlation break) that both the validator and the baseline miss — a mechanism
 demo, not a field-performance claim. A separate **position-taking RL sandbox**
 (`ml/rl_env.py`) runs on the same feature stream, with a no-lookahead proof
 (a cheating policy profits; obs-only policies can't) — mechanics only, no trained
-agent. See [`ml/README.md`](ml/README.md) for the head-to-head and for why the
-order-book deep-learning literature (Sirignano 2016) doesn't fit this feed.
+agent. Both rungs are evaluated **leakage-free**: a time-ordered fit→calibrate→test
+split (no random shuffle of a time series) with **calibrated, data-driven
+thresholds** instead of a textbook σ — and that rigor reveals the random-split AUC
+(0.997) was inflated by lookahead (~0.83–0.98 under the honest split). See
+[`ml/README.md`](ml/README.md) for the head-to-head and for why the order-book
+deep-learning literature (Sirignano 2016) doesn't fit this feed.
 
 ### Feed handler — A/B arbitration + gap detection
 

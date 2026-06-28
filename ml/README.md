@@ -109,7 +109,36 @@ and the rule validator already flags them deterministically by construction. The
 baseline "catching" them proves **the pipeline round-trips** — it is **not** an
 anomaly-detection result. The interesting question — *can a statistical model
 catch regime/structure anomalies the rule validator misses?* — only has meaning
-on **real captured market data**. Until then, treat every number here as plumbing.
+on **real captured market data**, which is what the calibrated, leakage-free
+evaluation below now does, honestly and with no manufactured labels.
+
+## Evaluation — leakage-free + calibrated (`evaluate.py`)
+
+"Robust ML" here means an evaluation that can't fool itself, not a bigger model. A
+single time-ordered split (`split.py`) carves every feature frame into
+**fit → calibrate → test, contiguous in time, per symbol** — never a random
+shuffle, which would leak the future. `assert_no_leakage` proves it on every run
+(the harness analogue of the RL env's no-lookahead proof). Both rungs are then
+calibrated on **clean past** data and scored on the unseen test tail:
+
+- the baseline's flag threshold is set to a target flag-rate on the calibrate
+  scores — **data-driven, replacing the textbook 5σ** that over-flags fat-tailed
+  minute bars ~7× (measured);
+- the autoencoder's reconstruction-error threshold comes from the clean calibrate
+  quantile.
+
+**What the rigor reveals (synthetic, labels known):** under the leakage-free time
+split the autoencoder ranks the joint anomalies at AUC ~0.83–0.98 while the
+per-feature baseline stays blind (~0.40) — but that's *down* from the 0.997 a
+random split reported. **That gap is the lookahead the random split was hiding**,
+and the AE degrades sharply when undertrained (it can even anti-rank these "calm"
+anomalies). Honest beats flattering.
+
+**On real data (no labels):** `evaluate.py real.bin` calibrates on clean past and
+reports flag-rate + a sample of flagged bars, explicitly **candidates, not
+validated** — it never manufactures labels for a precision number. On a real week
+(4 symbols, ~8k bars) the calibrated detectors flag ~2–3% of test bars, dominated
+by the closing-auction minute — real session-boundary microstructure, not faults.
 
 ## Layout
 
@@ -119,15 +148,21 @@ on **real captured market data**. Until then, treat every number here as plumbin
 | `replay_writer.py` | the inverse — Python emits a valid replay file the C++ validator reads (used to prove rule-invisibility) |
 | `features.py` | per-symbol bar features: returns, range, VWAP deviation, volume, intensity, realized vol, volume z |
 | `baseline.py` | rung 2 — classical robust-z / MAD anomaly baseline, the rung to beat |
-| `synth.py` | generates a rule-clean stream carrying a return↔volume correlation break (the rung-3 eval substrate) |
+| `synth.py` | rule-clean stream with a return↔volume correlation break (rung-3 *mechanism* demo) |
+| `synth_eval.py` | long clean run-up + many anomalies in a test tail (the *calibrated-eval* substrate) |
 | `autoencoder.py` | rung 3 — MLP autoencoder, reconstruction-error anomaly score (torch) |
+| `split.py` | time-ordered fit→calibrate→test split + `assert_no_leakage` (the robustness spine) |
+| `metrics.py` | AUC (ranking) + precision/recall/F1 (calibrated operating point) |
+| `evaluate.py` | leakage-free, calibrated ladder eval — synthetic (labels) and real (candidates) |
 | `detect.py` | CLI: file → features → baseline scores → top anomalies |
 | `eval_ladder.py` | CLI: the rung-0/2/3 head-to-head on the rule-invisible anomaly |
 | `rl_env.py` | RL sandbox — position-taking env over the feature stream (gymnasium-style, no dep) |
 | `rl_policies.py` | baseline policies: always-flat, random, momentum + an episode runner |
 | `rl_demo.py` | CLI: run the baselines + a cheating clairvoyant, print PnL |
 | `test_replay_reader.py` | round-trip test: C++ writes, Python reads, fields match |
-| `test_autoencoder.py` | rung-3 eval: validator silent + baseline blind + autoencoder catches it |
+| `test_autoencoder.py` | rung-3 *mechanism* demo: validator silent + baseline blind + autoencoder catches it |
+| `test_split.py` | the leakage guard: rejects a split where the future leaked backward |
+| `test_evaluate.py` | harness invariants — leakage-free, baseline blind, calibration hits target |
 | `test_rl_env.py` | RL mechanics + the no-lookahead proof (clairvoyant wins, obs-only can't) |
 
 ## Run it
@@ -140,6 +175,13 @@ pytest ml/ -v
 
 # the ladder head-to-head: rung 3 catches what the rules + baseline miss
 python3 ml/eval_ladder.py
+
+# the rigorous, leakage-free, calibrated eval (synthetic labels -> P/R/F1 + AUC)
+python3 ml/evaluate.py
+# ...and on real bars (no labels -> calibrated flag-rate + candidates):
+python3 ml/fetch_history.py --symbols AAPL MSFT NVDA TSLA \
+  --start 2026-06-22T13:30:00Z --end 2026-06-26T20:00:00Z --out real.bin
+python3 ml/evaluate.py real.bin
 
 # the RL sandbox: baselines net ~0 (no alpha), a cheating policy proves no leak
 python3 ml/rl_demo.py

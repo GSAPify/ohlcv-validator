@@ -180,6 +180,23 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-29** — ml: **leakage-free, calibrated evaluation harness** (`split.py`,
+  `metrics.py`, `evaluate.py`, `synth_eval.py`). "Robust ML" = an eval that can't
+  fool itself, not a bigger model. Spine: a time-ordered fit→calibrate→test split
+  (per symbol, no shuffle) with `assert_no_leakage` proving it every run. Baseline
+  threshold now **data-driven** (target flag-rate on clean calibrate scores),
+  replacing the magic 5σ that over-flagged fat tails ~7×; AE threshold from the
+  clean calibrate quantile. FINDING: under the leakage-free split the AE ranks the
+  synthetic joint anomalies at AUC ~0.83–0.98 vs the per-feature baseline's blind
+  ~0.40 — but *down from 0.997 on a random split*: that gap was the lookahead the
+  random split hid, and the AE anti-ranks when undertrained (the rigorous eval
+  exposes the fragility). Real-data run (Alpaca REST, a week × 4 symbols, ~8k bars):
+  calibrated detectors flag ~2–3% of test bars, dominated by the closing-auction
+  minute — real microstructure, candidates-not-validated, no manufactured labels.
+  Leakage-guard + harness-invariant tests; 28 ml tests. (RL reward-robustness +
+  walk-forward policy backtest = the planned follow-up; no learning agent, on
+  purpose.)
+
 - **2026-06-26** — cv-polish + x86 box session. (1) Repo first-impression: MIT
   `LICENSE`, GitHub description + 12 topics, README front-door rewrite (headline
   numbers + 60s quickstart + a GitHub-rendered **mermaid** architecture diagram).
