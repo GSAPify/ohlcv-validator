@@ -64,6 +64,9 @@ public:
         // reorder window is too small for the inter-line skew and real recoveries
         // will be missed (false gaps) -- the signal to size Window up.
         std::uint64_t max_reorder   = 0;
+        // Packets implausibly far ahead (seq - frontier > kMaxGap) -- dropped as
+        // corrupt/out-of-range rather than advancing the frontier onto them.
+        std::uint64_t rejected      = 0;
     };
 
     // Offer one received packet. Every message that becomes deliverable (the
@@ -90,9 +93,21 @@ public:
             return;
         }
 
+        // A sequence implausibly far ahead is a corrupt datagram (FeedPacket is
+        // cast straight off the wire with no upper bound on seq) or a catastrophic
+        // discontinuity. Two things we must NOT do: grind the forced-advance loop
+        // below up to ~2^63 times (a trivial hang/DoS on the hot ingest path), or
+        // resync the frontier onto the untrusted seq (one bad packet would then
+        // desync us from the real stream forever). Drop it; a genuine large gap
+        // surfaces out of band (the order book recovers from a snapshot).
+        if (seq - frontier_ > kMaxGap) {
+            ++stats_.rejected;
+            return;
+        }
+
         // Too far ahead for the window to hold the intervening hole: the frontier
         // can't wait any longer. Force it forward -- releasing what's buffered,
-        // declaring the rest gaps -- until seq fits the window.
+        // declaring the rest gaps -- until seq fits the window. Bounded by kMaxGap.
         while (seq - frontier_ >= Window) {
             advance_frontier(sink);
         }
@@ -130,6 +145,13 @@ public:
     [[nodiscard]] std::uint64_t frontier() const noexcept { return frontier_; }
 
 private:
+    // A sequence farther than this ahead of the frontier is treated as corrupt /
+    // out-of-range rather than a real gap. Large enough that any plausible reorder
+    // or gap is handled normally; small enough that a wild seq can't spin the
+    // forced-advance loop (and a >1M-message real gap needs snapshot recovery, not
+    // a million enumerated gaps, anyway).
+    static constexpr std::uint64_t kMaxGap = 1ull << 20;
+
     struct Slot {
         bool               occupied = false;
         std::uint64_t      seq      = 0;
