@@ -3,11 +3,50 @@
 [![CI](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![tests](https://img.shields.io/badge/tests-133%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-137%20passing-brightgreen)
 ![hot path](https://img.shields.io/badge/hot%20path-~6ns%2Frecord-blue)
 ![throughput](https://img.shields.io/badge/throughput-~1.0B%20rec%2Fs-blue)
 
-A low-latency C++20 validator for live OHLCV market data feeds.
+A low-latency C++20 market-data pipeline built to HFT engineering standards — not a
+data-quality script. It ingests live and exchange-style feeds, validates on a
+zero-allocation hot path, reconstructs an order book from a redundant multicast
+feed, and carries an honest ML layer on top. **Every correctness claim has a test;
+every performance claim, a measurement.**
+
+```
+validate    ~6 ns / record      zero allocations, proven by a test (not asserted)
+throughput  ~1.1 B rec/s (24c)  ~168 M/s single core
+latency     p50 20 ns · p99 30 ns · p99.9 40 ns      (x86, rdtscp)
+hardening   136 tests · ASan/UBSan/TSan clean · 1.9 M fuzzed parser inputs, 0 crashes
+```
+
+### Quickstart
+
+```sh
+brew install cmake ninja boost simdjson spdlog nlohmann-json googletest
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
+ctest --test-dir build                                          # the C++ test suite
+./build/gen_dataset data/replay.bin 1000000 && ./build/replay_bench data/replay.bin 100
+```
+
+### Architecture
+
+```mermaid
+flowchart LR
+  LIVE["Alpaca IEX (WebSocket)"] --> P["simdjson parse"]
+  LA["multicast line A"] --> ARB["FeedArbitrator<br/>dedup · in-order · gap detect"]
+  LB["multicast line B"] --> ARB
+  GEN["gen_dataset / live capture"] --> BIN[("binary replay .bin<br/>fixed 88B records")]
+  P --> W["WireRecord"]
+  ARB --> W
+  BIN --> W
+  W --> V["Validator<br/>zero-alloc · ~6 ns/record"]
+  ARB -. "gap" .-> BOOK["L2 order book<br/>snapshot recovery"]
+  V --> OUT["violations + live report"]
+  BIN --> RING["lock-free SPSC ring"]
+  BIN --> BENCH["replay_bench<br/>168M/s · 1.1B/s · p50 20ns"]
+  BIN --> ML["ml/ — features → robust-z → autoencoder<br/>+ RL sandbox"]
+```
 
 ## Goal
 
@@ -148,26 +187,35 @@ decode+validate timed with one `rdtscp` pair (timer overhead measured and
 subtracted), 5M samples (`replay_bench_rdtsc`):
 
 ```
-p50  20 ns   ·   p99  30 ns   ·   p99.9  50 ns   ·   p99.99 ~200 ns   ·   mean ~17 ns
+p50  20 ns   ·   p99  30 ns   ·   p99.9  40 ns   ·   p99.99 ~200 ns   ·   mean ~17 ns
 ```
 
 Stable to p99.9 across runs. This is per-event, `lfence`-serialized latency (the
 point-in-time metric) — higher than the amortized throughput above because
-serialization defeats pipelining. The far tail (max tens of µs) is OS preemption:
-WSL2 isn't an isolated `isolcpus`/`nohz_full` core, so rare scheduler stalls show
-up; bare metal would erase them.
+serialization defeats pipelining.
+
+The far tail (p99.99 ~200 ns, max tens of µs) is the **WSL2 virtualization layer,
+not normal-task preemption** — and I measured that rather than assuming it: pinning
+plus `SCHED_FIFO` real-time scheduling (`chrt -f`) leaves p99.99 and max
+*unchanged*, so raising scheduling priority doesn't help. The tail is the Hyper-V
+host descheduling the VM's vCPU. Collapsing it needs a genuinely isolated core
+(`isolcpus`/`nohz_full`) on bare metal, which WSL2 can't fully provide. The core
+distribution (p50–p99.9) is what the validator actually controls, and it's tight.
 
 ### Multicore scaling — x86, 24 threads
 
 Shard-by-symbol across the 7900X3D's 24 threads (`replay_bench_mt`):
 
 ```
- 1c 115 M/s   2c 1.8×   4c 3.0×   8c 5.1×   10c 7.4×   24c ~9× → ~1.0 B records/sec
+ 1c 93 M/s   2c 2.2×   4c 3.9×   8c 6.4×   10c 9.5×   14c (dip)   24c ~12× → ~1.1 B records/sec
 ```
 
 Near-linear to ~10 cores, then memory bandwidth and the chip's dual-CCD / 3D
 V-cache asymmetry taper it (a reproducible dip at 14 threads, as work spills
-across both chiplets). Peak ≈ **1.0 billion records/sec**, single machine.
+across both chiplets). Peak ≈ **1.1 billion records/sec**, single machine
+(reconfirmed). The per-core and speedup magnitudes wander run-to-run on a
+non-isolated WSL2 host; the shape (near-linear early, chiplet dip, ~1 B peak) is
+stable.
 
 ### Pipeline — lock-free SPSC ring (x86)
 

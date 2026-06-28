@@ -180,6 +180,19 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-06-26** — cv-polish + x86 box session. (1) Repo first-impression: MIT
+  `LICENSE`, GitHub description + 12 topics, README front-door rewrite (headline
+  numbers + 60s quickstart + a GitHub-rendered **mermaid** architecture diagram).
+  (2) x86 box (Ryzen 7900X3D, WSL2) measurements: latency reconfirmed (p50 20 /
+  p99 30 / p99.9 40 ns); **tuning finding** — pinning + `chrt -f` SCHED_FIFO does
+  NOT move p99.99/max, so the far tail is the Hyper-V/WSL2 layer, not task
+  preemption (folded into the README honestly; bare-metal `isolcpus`/`nohz_full`
+  needed, which WSL2 can't fully provide — the isolcpus run itself is still pending,
+  box went offline mid-session before any `.wslconfig` change). Multicore peak
+  reconfirmed ~1.1 B rec/s (24t); SPSC packing/cached-ring finding holds. (3) A
+  code-review pass found + fixed a real liveness bug (arbitrator wild-seq hang, see
+  its own entry / PR).
+
 - **2026-06-26** — book: **L2 order-book builder + snapshot recovery** (`src/book/`).
   Builds an aggregated limit order book from a sequenced delta stream — the depth
   structure OHLCV/top-of-quote can't give. `OrderBook` (zero-alloc, best-at-front
