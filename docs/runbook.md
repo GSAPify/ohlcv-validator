@@ -180,6 +180,20 @@ brew upgrade cmake ninja boost simdjson spdlog nlohmann-json googletest
 
 Date + one line of what changed and why. Newest first.
 
+- **2026-07-13** — ml: **RL reward robustness + walk-forward policy backtest**
+  (`backtest.py`, `rl_env` risk-aversion, richer `run_episode`). Robustness on the
+  RL side = hardening the env + eval, NOT a learning agent (a trained agent on this
+  data shows no edge or a spurious one, and drags identity toward "trading bot").
+  `rl_env` gains an optional mean-variance `risk_aversion` penalty (0 = pure PnL,
+  unchanged) + raw-PnL tracking; `run_episode` now reports per-step Sharpe + max
+  drawdown. `backtest.py` runs the existing heuristics through the SAME leakage-free
+  time split as the anomaly eval (scored only on the out-of-sample test tail) and
+  sweeps the transaction cost. Honest result: obs-only heuristics net ~0 and erode
+  with cost — on real bars a +0.06 momentum "edge" at 0bp flips negative by 1bp
+  (an edge that can't survive cost isn't one). No profit claimed. 4 new tests
+  (risk-aversion penalizes reward not PnL; cost lowers PnL; leakage-free test tail;
+  flat-is-zero stats); 32 ml tests, ruff clean.
+
 - **2026-06-29** — ml: **leakage-free, calibrated evaluation harness** (`split.py`,
   `metrics.py`, `evaluate.py`, `synth_eval.py`). "Robust ML" = an eval that can't
   fool itself, not a bigger model. Spine: a time-ordered fit→calibrate→test split

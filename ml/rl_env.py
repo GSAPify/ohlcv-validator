@@ -43,6 +43,7 @@ class BarTradingEnv:
         observations: np.ndarray,
         forward_returns: np.ndarray,
         txn_cost: float = 1e-4,
+        risk_aversion: float = 0.0,
     ):
         if len(observations) != len(forward_returns):
             raise ValueError(
@@ -52,17 +53,22 @@ class BarTradingEnv:
         self.observations = np.asarray(observations, dtype=np.float64)
         self.forward_returns = np.asarray(forward_returns, dtype=np.float64)
         self.txn_cost = float(txn_cost)
+        self.risk_aversion = float(risk_aversion)  # mean-variance penalty weight
         self.n_steps = len(self.forward_returns)
         self.n_features = self.observations.shape[1] if self.observations.ndim == 2 else 0
         self._t = 0
         self._position = 0
         self._cum_reward = 0.0
+        self._cum_pnl = 0.0
+        self._last_pnl = 0.0
 
     def reset(self, *, seed: int | None = None):
         del seed  # stateless reset; arg kept for gymnasium-style call sites
         self._t = 0
         self._position = 0
         self._cum_reward = 0.0
+        self._cum_pnl = 0.0
+        self._last_pnl = 0.0
         return self.observations[0], self._info()
 
     def step(self, action: int):
@@ -71,10 +77,14 @@ class BarTradingEnv:
         if self._t >= self.n_steps:
             raise RuntimeError("step() called on a finished episode; call reset()")
 
-        reward = action * self.forward_returns[self._t] - self.txn_cost * abs(
-            action - self._position
-        )
+        gross = action * self.forward_returns[self._t]
+        pnl = gross - self.txn_cost * abs(action - self._position)  # cost-inclusive
+        # Optional mean-variance penalty: discourage holding through volatile moves.
+        # risk_aversion == 0 makes reward exactly the PnL (the default -- unchanged).
+        reward = pnl - self.risk_aversion * gross * gross
         self._position = action
+        self._last_pnl = pnl
+        self._cum_pnl += pnl
         self._cum_reward += reward
         self._t += 1
 
@@ -88,10 +98,13 @@ class BarTradingEnv:
             "t": self._t,
             "position": self._position,
             "cum_reward": self._cum_reward,
+            "cum_pnl": self._cum_pnl,      # raw cost-inclusive PnL (risk-agnostic)
+            "pnl": self._last_pnl,
         }
 
 
-def from_replay(data, symbol: str | None = None, txn_cost: float = 1e-4) -> BarTradingEnv:
+def from_replay(data, symbol: str | None = None, txn_cost: float = 1e-4,
+                risk_aversion: float = 0.0) -> BarTradingEnv:
     """Build an env for ONE symbol from a ReplayData.
 
     Forward returns are computed strictly within the chosen symbol -- never across
@@ -132,4 +145,4 @@ def from_replay(data, symbol: str | None = None, txn_cost: float = 1e-4) -> BarT
     # Defined for t = 0 .. n-2, so the last bar (no successor) is dropped.
     fwd = close[1:] / close[:-1] - 1.0
     obs = frame.features[:-1]
-    return BarTradingEnv(obs, fwd, txn_cost=txn_cost)
+    return BarTradingEnv(obs, fwd, txn_cost=txn_cost, risk_aversion=risk_aversion)
