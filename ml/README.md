@@ -99,8 +99,24 @@ correct bets, and the momentum baseline staying flat rules out the *likeliest*
 leak — `log_return` accidentally being a forward return. (`random` ignores the
 observation entirely, so it's only a sanity floor, not leak evidence.)
 `from_replay` computes forward returns strictly **within** a symbol (never spanning
-a symbol boundary). A trained agent (DQN/PPO) is a later track gated on real data —
-same discipline as the autoencoder's field eval.
+a symbol boundary).
+
+Rather than a **trained agent** (a DQN/PPO on this data shows either no edge or a
+spurious one, and would drag the project toward "trading bot" — a weaker signal
+than rock-solid infra + an ML layer that refuses to overclaim), robustness here
+hardens the reusable, correct thing: the environment and its evaluation.
+
+- **Reward robustness** — transaction cost is a swept parameter, and an optional
+  mean-variance penalty (`risk_aversion`) lets the reward express risk aversion,
+  not just raw PnL (with `risk_aversion=0` the reward *is* the PnL).
+- **Walk-forward backtest** (`backtest.py`) — the existing heuristic policies run
+  through the **same leakage-free time split** as the anomaly eval, scored only on
+  the out-of-sample test tail, reporting PnL, per-step Sharpe, trades, and max
+  drawdown, and **sweeping the transaction cost**. The honest result: obs-only
+  heuristics net ~0 and erode with cost — on real bars a tiny +0.06 momentum
+  "edge" at zero cost flips negative by 1 bp. No profit is claimed; the point is
+  the leakage-free methodology and cost sensitivity (an "edge" that can't survive
+  realistic cost isn't one).
 
 ## ⚠️ The honesty guardrail
 
@@ -159,11 +175,13 @@ by the closing-auction minute — real session-boundary microstructure, not faul
 | `rl_env.py` | RL sandbox — position-taking env over the feature stream (gymnasium-style, no dep) |
 | `rl_policies.py` | baseline policies: always-flat, random, momentum + an episode runner |
 | `rl_demo.py` | CLI: run the baselines + a cheating clairvoyant, print PnL |
+| `backtest.py` | walk-forward policy backtest on the out-of-sample test tail, with a txn-cost sweep |
 | `test_replay_reader.py` | round-trip test: C++ writes, Python reads, fields match |
 | `test_autoencoder.py` | rung-3 *mechanism* demo: validator silent + baseline blind + autoencoder catches it |
 | `test_split.py` | the leakage guard: rejects a split where the future leaked backward |
 | `test_evaluate.py` | harness invariants — leakage-free, baseline blind, calibration hits target |
 | `test_rl_env.py` | RL mechanics + the no-lookahead proof (clairvoyant wins, obs-only can't) |
+| `test_backtest.py` | reward robustness (risk-aversion, cost sensitivity) + leakage-free test-tail |
 
 ## Run it
 
@@ -185,6 +203,10 @@ python3 ml/evaluate.py real.bin
 
 # the RL sandbox: baselines net ~0 (no alpha), a cheating policy proves no leak
 python3 ml/rl_demo.py
+
+# walk-forward policy backtest with a txn-cost sweep (leakage-free test tail)
+python3 ml/backtest.py            # synthetic
+python3 ml/backtest.py real.bin   # real bars
 
 # score a synthetic file with the baseline (plumbing demo — see the guardrail)
 ./build/gen_dataset data/replay.bin 100000

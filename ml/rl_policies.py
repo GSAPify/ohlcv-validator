@@ -52,18 +52,33 @@ class MomentumPolicy:
 
 
 def run_episode(env, policy) -> dict:
-    """Run one full episode of a policy against an env; return PnL + trade count."""
+    """Run one full episode of a policy against an env; return PnL, trades, and
+    risk stats. `sharpe` is per-step (mean/std of per-step PnL) -- a relative
+    ranking, deliberately NOT annualized (an annualized Sharpe off synthetic or a
+    few days of bars would be a fiction)."""
     obs, _ = env.reset()
-    cum = 0.0
+    cum_reward = 0.0
     trades = 0
     prev = 0
     done = False
+    pnls = []
     while not done:
         action = policy(obs)
-        obs, reward, terminated, truncated, _ = env.step(action)
-        cum += reward
+        obs, reward, terminated, truncated, info = env.step(action)
+        cum_reward += reward
+        pnls.append(info["pnl"])
         if action != prev:
             trades += 1
         prev = action
         done = terminated or truncated
-    return {"cum_reward": cum, "trades": trades}
+    p = np.asarray(pnls, dtype=np.float64)
+    equity = np.cumsum(p)
+    max_dd = float((np.maximum.accumulate(equity) - equity).max()) if len(equity) else 0.0
+    sharpe = float(p.mean() / p.std()) if len(p) > 1 and p.std() > 0 else 0.0
+    return {
+        "cum_reward": cum_reward,
+        "cum_pnl": float(p.sum()),
+        "trades": trades,
+        "sharpe": sharpe,
+        "max_drawdown": max_dd,
+    }
