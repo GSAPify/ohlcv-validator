@@ -3,9 +3,9 @@
 [![CI](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![tests](https://img.shields.io/badge/tests-137%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-147%20passing-brightgreen)
 ![hot path](https://img.shields.io/badge/hot%20path-~6ns%2Frecord-blue)
-![throughput](https://img.shields.io/badge/throughput-~1.0B%20rec%2Fs-blue)
+![throughput](https://img.shields.io/badge/throughput-~1.1B%20rec%2Fs-blue)
 
 A low-latency C++20 market-data pipeline built to HFT engineering standards — not a
 data-quality script. It ingests live and exchange-style feeds, validates on a
@@ -17,7 +17,7 @@ every performance claim, a measurement.**
 validate    ~6 ns / record      zero allocations, proven by a test (not asserted)
 throughput  ~1.1 B rec/s (24c)  ~168 M/s single core
 latency     p50 20 ns · p99 30 ns · p99.9 40 ns      (x86, rdtscp)
-hardening   136 tests · ASan/UBSan/TSan clean · 1.9 M fuzzed parser inputs, 0 crashes
+hardening   147 tests · ASan/UBSan/TSan clean · 1.9 M fuzzed parser inputs, 0 crashes
 ```
 
 ### Quickstart
@@ -105,8 +105,11 @@ autoencoder is shown catching a **rule-invisible** anomaly (a return↔volume
 correlation break) that both the validator and the baseline miss — a mechanism
 demo, not a field-performance claim. A separate **position-taking RL sandbox**
 (`ml/rl_env.py`) runs on the same feature stream, with a no-lookahead proof
-(a cheating policy profits; obs-only policies can't) — mechanics only, no trained
-agent. Both rungs are evaluated **leakage-free**: a time-ordered fit→calibrate→test
+(a cheating policy profits; obs-only policies can't). Rather than a trained agent,
+the RL side is hardened with a **walk-forward backtest** — the heuristics scored
+only on the out-of-sample test tail with the **transaction cost swept** (obs-only
+edges net ~0 and die by ~1 bp) — plus a risk-adjustable reward. Both the anomaly
+rungs and the backtest are evaluated **leakage-free**: a time-ordered fit→calibrate→test
 split (no random shuffle of a time series) with **calibrated, data-driven
 thresholds** instead of a textbook σ — and that rigor reveals the random-split AUC
 (0.997) was inflated by lookahead (~0.83–0.98 under the honest split). See
