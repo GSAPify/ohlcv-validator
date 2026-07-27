@@ -51,9 +51,14 @@ inline constexpr double kPriceRelTol = 1e-6;
 // Price-band outlier detection parameters. kPriceBandFrac is the maximum
 // fractional deviation from the EWMA reference before a record is flagged;
 // kRefEwmaAlpha controls how quickly the reference tracks the true price.
-// Outliers do NOT update the reference — one bad tick must not poison it.
-inline constexpr double kPriceBandFrac  = 0.05;
-inline constexpr double kRefEwmaAlpha   = 0.2;
+// A single outlier does NOT update the reference — one bad tick must not poison
+// it. kBandReanchorRun consecutive out-of-band prints, however, are a genuine
+// move rather than a bad tick, and re-anchor the reference: the reference only
+// advances on in-band prints, so after a move larger than the band there is no
+// in-band print left to advance it and the symbol would flag forever.
+inline constexpr double        kPriceBandFrac    = 0.05;
+inline constexpr double        kRefEwmaAlpha     = 0.2;
+inline constexpr std::uint32_t kBandReanchorRun  = 3;
 
 struct Result {
     std::uint32_t flags = kNone;
@@ -94,10 +99,13 @@ private:
         bool          seen     = false;  // any record seen (for seq-gap gating)
 
         // Price-band EWMA reference. Initialised on the first valid trade; only
-        // valid (non-outlier) trades move it. Quote mid checks read but never
-        // write this field so quotes cannot drift the reference.
+        // valid (non-outlier) trades move it, except that a run of
+        // kBandReanchorRun consecutive outliers re-anchors it (see
+        // check_price_band). Quote mid checks read but never write these fields
+        // so quotes cannot drift the reference.
         double        ref_price  = 0.0;
         bool          ref_init   = false;
+        std::uint32_t breach_run = 0;    // consecutive out-of-band trade prints
 
         // Trade accumulator for bar reconstruction: the aggregate of the VALID
         // trades seen for this symbol since its last bar. Reset when a bar
@@ -125,8 +133,10 @@ private:
 
     // Price-band check: flags kPriceBandBreach if price deviates from the slot's
     // EWMA reference by more than kPriceBandFrac. On the first call (warmup) the
-    // reference is initialised and no flag is set. An outlier does NOT update the
-    // reference — subsequent normal trades will still pass.
+    // reference is initialised and no flag is set. An isolated outlier does NOT
+    // update the reference — subsequent normal trades will still pass — but
+    // kBandReanchorRun consecutive outliers re-anchor it to the latest price so a
+    // sustained move (halt resume, gap open) recovers instead of flagging forever.
     static void check_price_band(Slot& s, double price, Result& out) noexcept;
 
     // Fold one valid trade into the slot's accumulator.
