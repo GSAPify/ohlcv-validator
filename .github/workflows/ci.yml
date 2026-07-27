@@ -24,6 +24,13 @@ permissions:
 #   lint  ────────────────┼─► cpp-tsan ─────┼──► ci-success
 #   (ruff, py compile)    ├─► cpp-linux ────┤    (required check)
 #                         └─► ml-tests ─────┘
+#
+# Two extra best-effort jobs hang off `lint` but never feed `ci-success`, so
+# neither can block a merge:
+#   multicast-test — opt-in ctest run of the loopback-multicast integration
+#                    test (not guaranteed on runners); every push/PR.
+#   fuzz-parser    — manual-dispatch libFuzzer run against the parser with a
+#                    fixed time budget.
 
 jobs:
   lint:
@@ -144,6 +151,50 @@ jobs:
         run: pip install -r ml/requirements.txt
       - name: Run ML tests
         run: pytest ml/ -v
+
+  multicast-test:
+    name: C++ · multicast integration (best-effort)
+    needs: lint
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: brew install cmake ninja boost simdjson spdlog nlohmann-json googletest
+      - name: Configure (opt in to local-only tests)
+        run: cmake -B build-local -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_LOCAL_TESTS=ON
+      - name: Build
+        run: cmake --build build-local --target feed_multicast_test
+      - name: Run multicast test
+        run: ctest --test-dir build-local -L local --output-on-failure
+
+  fuzz-parser:
+    name: Fuzz · parser (manual)
+    needs: lint
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    continue-on-error: true
+    # Same brew-vs-sanitizer false positive as cpp-asan-ubsan: simdjson comes
+    # from brew un-instrumented, and this build links it against an
+    # ASan-instrumented parser.
+    env:
+      ASAN_OPTIONS: detect_container_overflow=0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: brew install cmake ninja llvm boost simdjson spdlog nlohmann-json googletest
+      - name: Configure (fuzzer, Homebrew LLVM clang++)
+        run: |
+          cmake -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=Release -DFUZZER=ON \
+            -DCMAKE_CXX_COMPILER="$(brew --prefix llvm)/bin/clang++"
+      - name: Build fuzz target
+        run: cmake --build build-fuzz --target fuzz_parser
+      - name: Run fuzzer (fixed time budget)
+        run: |
+          set -o pipefail
+          ./build-fuzz/tests/fuzz_parser -max_total_time=60 -print_final_stats=1 2>&1 | tee fuzz_output.log
+      - name: Report exec count
+        run: grep 'stat::number_of_executed_units:' fuzz_output.log
 
   ci-success:
     name: CI Success
