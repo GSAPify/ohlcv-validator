@@ -54,13 +54,16 @@ rung 2  robust-z baseline : flagged 0/15 anomaly bars, AUC 0.21  -> BLIND
 rung 3  autoencoder       : AUC 0.997, anomaly recon-error 12.7x normal -> CATCHES IT
 ```
 
+(0.997 is the random-split figure — see the leakage-free result below, which
+is lower and the honest one to cite.)
+
 The autoencoder is evaluated **out of sample**: it trains on 70% of normal bars,
 and the head-to-head scores held-out anomaly bars against a held-out normal slice
 (so the "normal" reference error isn't measured on training rows). A univariate
 baseline scores each feature independently — it *structurally cannot* see "volume
 and return decoupled." The autoencoder, trained on the joint distribution of
 normal bars, reconstructs the broken combination poorly. That gap (AUC 0.997 vs
-0.21) is the entire justification for the rung. **This is a mechanism demo on a
+0.21, random-split) is the entire justification for the rung. **This is a mechanism demo on a
 constructed anomaly — not a field-performance claim. Real evaluation needs
 live-captured data.**
 

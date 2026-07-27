@@ -3,7 +3,7 @@
 [![CI](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/GSAPify/ohlcv-validator/actions/workflows/ci.yml)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
-![tests](https://img.shields.io/badge/tests-147%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-115%20C%2B%2B%20%C2%B7%2032%20Python-brightgreen)
 ![hot path](https://img.shields.io/badge/hot%20path-~6ns%2Frecord-blue)
 ![throughput](https://img.shields.io/badge/throughput-~1.1B%20rec%2Fs-blue)
 
@@ -14,11 +14,16 @@ feed, and carries an honest ML layer on top. **Every correctness claim has a tes
 every performance claim, a measurement.**
 
 ```
-validate    ~6 ns / record      zero allocations, proven by a test (not asserted)
-throughput  ~1.1 B rec/s (24c)  ~168 M/s single core
-latency     p50 20 ns · p99 30 ns · p99.9 40 ns      (x86, rdtscp)
-hardening   147 tests · ASan/UBSan/TSan clean · 1.9 M fuzzed parser inputs, 0 crashes
+validate    ~6 ns / record (Apple Silicon)   zero allocations, proven by a test (not asserted)
+throughput  ~1.1 B rec/s (24c, x86)  ~168 M/s single core (Apple Silicon)
+latency     p50 20 ns · p99 30 ns · p99.9 40 ns      (x86, rdtscp — see Benchmark)
+hardening   115 C++ · 32 Python tests · ASan/UBSan across the suite, TSan on the ring +
+            multicore bench · parser fuzz: see Test below
 ```
+
+Every number above is either reproduced on this machine or sourced to the x86 box
+that produced it, with the date · host · command stamp in Benchmark and Test
+below — not a bare figure.
 
 ### Quickstart
 
@@ -179,6 +184,11 @@ throughput:  ~167 M records / sec
 mean:        ~6 ns / record   (allocation-free hot path)
 ```
 
+Reproduced today: 2026-07-27, Apple Silicon (M-series), `main @ d6b64b0`,
+`./build/replay_bench data/replay.bin 100` (100 passes) → 6.03 ns/record,
+165.8 M records/sec single core; a second run the same session: 6.00 ns/record,
+166.7 M/s.
+
 (The per-trade reconstruction accumulator — running on every trade — is what
 moved this from the ~2 ns/record of the bounds-only validator; still allocation-
 free, the work is just real now.)
@@ -191,15 +201,19 @@ measured there. For that, the bench runs on x86.
 
 Ryzen 9 7900X3D (4.4 GHz invariant TSC), single core pinned with `taskset`, each
 decode+validate timed with one `rdtscp` pair (timer overhead measured and
-subtracted), 5M samples (`replay_bench_rdtsc`):
+subtracted), 5M samples (`replay_bench_rdtsc`); first measured 2026-06-06,
+reconfirmed 2026-06-26 (see `docs/runbook.md`):
 
 ```
 p50  20 ns   ·   p99  30 ns   ·   p99.9  40 ns   ·   p99.99 ~200 ns   ·   mean ~17 ns
 ```
 
-Stable to p99.9 across runs. This is per-event, `lfence`-serialized latency (the
-point-in-time metric) — higher than the amortized throughput above because
-serialization defeats pipelining.
+p50/p99 held steady across both sessions; p99.9 moved 40-50 ns run to run (50 ns
+on the 2026-06-06 first run, 40 ns on the 2026-06-26 reconfirm above) — narrower
+than a claim of flat stability, honest about the tail's session-to-session
+noise. This is per-event, `lfence`-serialized latency (the point-in-time
+metric) — higher than the amortized throughput above because serialization
+defeats pipelining.
 
 The far tail (p99.99 ~200 ns, max tens of µs) is the **WSL2 virtualization layer,
 not normal-task preemption** — and I measured that rather than assuming it: pinning
@@ -211,7 +225,8 @@ distribution (p50–p99.9) is what the validator actually controls, and it's tig
 
 ### Multicore scaling — x86, 24 threads
 
-Shard-by-symbol across the 7900X3D's 24 threads (`replay_bench_mt`):
+Shard-by-symbol across the 7900X3D's 24 threads (`replay_bench_mt`); first
+measured 2026-06-06, reconfirmed 2026-06-26 (see `docs/runbook.md`):
 
 ```
  1c 93 M/s   2c 2.2×   4c 3.9×   8c 6.4×   10c 9.5×   14c (dip)   24c ~12× → ~1.1 B records/sec
@@ -402,6 +417,23 @@ cmake --build build
 ```
 ctest --test-dir build --output-on-failure
 ```
+
+`ctest` reports 115 C++ tests; the other 32 are Python (`pytest ml/`, see
+[`ml/README.md`](ml/README.md)) — together the "115 C++ · 32 Python" figure
+above. `tests/test_feed_multicast.cpp` is built but excluded from both `ctest`
+and CI (multicast isn't guaranteed on runners — see Feed handler above); it's
+10/10 green run locally and isn't in either count.
+
+ASan/UBSan run over this full suite (`.github/workflows/ci.yml`); TSan runs
+only on the SPSC ring test and the multicore bench
+(`--gtest_filter='SpscRing.*'` + `replay_bench_mt`), not the full suite —
+narrower than "ASan/UBSan/TSan clean" reads out of context.
+
+The parser fuzz harness (`tests/fuzz_parser.cpp`, libFuzzer) logged 1.9 M
+executions with zero crashes per the build recipe in `docs/runbook.md`. It
+isn't wired into a CMake target or a CI job yet (that's tracked as separate,
+in-flight work), so treat the count as reproducible by hand-running that
+recipe, not as a CI-verified number.
 
 ## Runbook
 
