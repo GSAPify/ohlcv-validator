@@ -27,7 +27,6 @@
 
 namespace {
 
-using ohlcv::replay::FileHeader;
 using ohlcv::replay::RecordType;
 using ohlcv::replay::WireRecord;
 
@@ -133,14 +132,13 @@ int main(int argc, char** argv) {
                      path.c_str());
         return 1;
     }
-    const auto* hdr = reinterpret_cast<const FileHeader*>(m.base());
-    if (hdr->magic != ohlcv::replay::kMagic) {
-        std::fprintf(stderr, "bad magic: not a replay file\n");
+    const auto view = ohlcv::replay::view_replay(m.base(), m.size());
+    if (view.error != nullptr) {
+        std::fprintf(stderr, "%s: %s\n", path.c_str(), view.error);
         return 1;
     }
-    const auto* records =
-        reinterpret_cast<const WireRecord*>(m.base() + sizeof(FileHeader));
-    const std::uint64_t count = hdr->record_count;
+    const auto* const   records = view.records;
+    const std::uint64_t count   = view.count;
 
     const unsigned hw = std::thread::hardware_concurrency();
     std::printf("dataset: %llu records · %u hardware threads · %llu passes\n\n",
