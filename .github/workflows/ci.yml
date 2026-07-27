@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.15.22
       - name: Ruff (Python ML layer)
         run: ruff check ml/
       - name: Every ml/ module compiles
