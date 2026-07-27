@@ -420,6 +420,45 @@ TEST(Validator, PriceBandOutlierDoesNotPoisonReference) {
     EXPECT_FALSE(r.has(v::kPriceBandBreach));
 }
 
+// (c2) A *sustained* move must re-anchor the reference. One discontinuity (halt
+//      resume, gap open) followed by normal in-band trading at the new level is
+//      the real market, not a bad tick: the validator must stop flagging instead
+//      of freezing its reference at the pre-gap price forever.
+TEST(Validator, PriceBandReanchorsAfterSustainedMove) {
+    Validator v;
+    std::uint64_t seq = 0;
+    auto trade = [&](double price) {
+        ++seq;
+        return v.check(make_trade("AAPL", seq, seq * 1000, price));
+    };
+
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_TRUE(trade(100.0).ok()) << "warmup step " << i;
+    }
+
+    // The discontinuity: +20%, well outside the 5% band. This one flags.
+    EXPECT_TRUE(trade(120.0).has(v::kPriceBandBreach));
+
+    // Trading continues normally at the new level — every step below is inside
+    // the band relative to its predecessor, so nothing here is an outlier.
+    bool recovered = false;
+    for (int i = 0; i < 20; ++i) {
+        const double price = 120.0 + 0.1 * i;
+        if (!trade(price).has(v::kPriceBandBreach)) {
+            recovered = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(recovered) << "reference never re-anchored to the new level";
+
+    // ...and it must stay recovered, not oscillate in and out of the band.
+    for (int i = 0; i < 50; ++i) {
+        const double price = 122.0 + 0.1 * i;
+        EXPECT_FALSE(trade(price).has(v::kPriceBandBreach))
+            << "breach after re-anchor at step " << i;
+    }
+}
+
 // (d) The very first trade for a symbol (warmup) must never flag.
 TEST(Validator, PriceBandFirstTradeNeverFlags) {
     Validator v;

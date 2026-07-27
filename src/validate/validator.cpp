@@ -82,11 +82,21 @@ void Validator::check_price_band(Slot& s, double price, Result& out) noexcept {
         return;
     }
     if (std::fabs(price - s.ref_price) > kPriceBandFrac * s.ref_price) {
-        // Outlier: flag but do not update the reference so a single bad tick
-        // cannot shift the band for every subsequent record.
+        // Outlier: flag, and do not let a single bad tick shift the band.
         out.flags |= kPriceBandBreach;
+        // But a *run* of out-of-band prints is not a bad tick — it's a real move
+        // the reference missed (halt resume, gap open, fast market). Without this
+        // the reference can never catch up: it only advances in-band, and after a
+        // move larger than the band there is no in-band print left to advance it,
+        // so the symbol flags every subsequent record forever. Re-anchor to the
+        // print that completes the run.
+        if (++s.breach_run >= kBandReanchorRun) {
+            s.ref_price  = price;
+            s.breach_run = 0;
+        }
     } else {
         // In-band: update the EWMA to track genuine price drift.
+        s.breach_run = 0;
         s.ref_price = kRefEwmaAlpha * price + (1.0 - kRefEwmaAlpha) * s.ref_price;
     }
 }
