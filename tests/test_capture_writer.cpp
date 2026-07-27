@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -79,6 +80,67 @@ TEST(CaptureWriter, FinalizeIsIdempotent) {
     ASSERT_NE(m.base(), nullptr);
     const auto* hdr = reinterpret_cast<const rp::FileHeader*>(m.base());
     EXPECT_EQ(hdr->record_count, 1U);
+}
+
+// Writes a header with an arbitrary record_count followed by `body_records`
+// actual records — something CaptureWriter cannot produce, since it patches the
+// real count in finalize().
+void write_lying_file(const std::string& path, std::uint64_t claimed_count,
+                      std::size_t body_records) {
+    const rp::FileHeader hdr{rp::kMagic, rp::kVersion, claimed_count};
+    std::FILE*           f = std::fopen(path.c_str(), "wb");
+    ASSERT_NE(f, nullptr);
+    std::fwrite(&hdr, sizeof(hdr), 1, f);
+    const rp::WireRecord rec = make_trade_rec("AAPL", 1, 100.0);
+    for (std::size_t i = 0; i < body_records; ++i)
+        std::fwrite(&rec, sizeof(rec), 1, f);
+    std::fclose(f);
+}
+
+// A well-formed file must pass the guard and expose every record.
+TEST(ReplayBounds, AcceptsWellFormedFile) {
+    const std::string path = "/tmp/ohlcv_bounds_ok.bin";
+    write_lying_file(path, 3, 3);  // claimed == actual, so not lying
+
+    rp::MappedFile m(path.c_str());
+    ASSERT_NE(m.base(), nullptr);
+    const auto view = rp::view_replay(m.base(), m.size());
+    EXPECT_EQ(view.error, nullptr);
+    EXPECT_EQ(view.count, 3U);
+    ASSERT_NE(view.records, nullptr);
+}
+
+// The crash class: a header claiming more records than the mapping holds. The
+// bench binaries used to walk straight off the end of the mmap (SIGSEGV).
+TEST(ReplayBounds, RejectsCountBeyondFileSize) {
+    const std::string path = "/tmp/ohlcv_bounds_truncated.bin";
+    write_lying_file(path, 200000, 2);
+
+    rp::MappedFile m(path.c_str());
+    ASSERT_NE(m.base(), nullptr);
+    const auto view = rp::view_replay(m.base(), m.size());
+    EXPECT_NE(view.error, nullptr);
+    EXPECT_EQ(view.records, nullptr);
+}
+
+// A hostile count near UINT64_MAX must not wrap the size arithmetic past the
+// check — the guard divides instead of multiplying for exactly this case.
+TEST(ReplayBounds, RejectsOverflowingRecordCount) {
+    const std::string path = "/tmp/ohlcv_bounds_overflow.bin";
+    write_lying_file(path, UINT64_MAX, 2);
+
+    rp::MappedFile m(path.c_str());
+    ASSERT_NE(m.base(), nullptr);
+    const auto view = rp::view_replay(m.base(), m.size());
+    EXPECT_NE(view.error, nullptr);
+    EXPECT_EQ(view.records, nullptr);
+}
+
+// A file too small to even hold the 16-byte header must be rejected, not read.
+TEST(ReplayBounds, RejectsTruncatedHeader) {
+    const auto view = rp::view_replay(nullptr, 0);
+    EXPECT_NE(view.error, nullptr);
+    EXPECT_EQ(view.records, nullptr);
 }
 
 }  // namespace

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -45,5 +46,44 @@ static_assert(std::is_trivially_copyable_v<FileHeader>);
 // corrupting every downstream reader.
 static_assert(sizeof(FileHeader) == 16, "replay header is 16 bytes on disk");
 static_assert(sizeof(WireRecord) == 88, "replay record stride is 88 bytes on disk");
+
+// A bounds-checked view of a mapped replay file. `error` is non-null iff the
+// mapping is unusable, in which case `records` is null and must not be read.
+struct ReplayView {
+    const WireRecord* records = nullptr;
+    std::uint64_t     count   = 0;
+    const char*       error   = nullptr;
+};
+
+// Validate a mapped replay file before a single record is dereferenced. The
+// header's record_count is attacker- and truncation-controlled, so trusting it
+// walks the reader off the end of the mapping (SIGSEGV). Same rule the Python
+// reader in ml/replay_reader.py enforces: the size check is not optional.
+[[nodiscard]] inline ReplayView view_replay(const std::byte* base,
+                                            std::size_t      size) noexcept {
+    ReplayView v;
+    if (base == nullptr || size < sizeof(FileHeader)) {
+        v.error = "truncated header (file smaller than 16 bytes)";
+        return v;
+    }
+    const auto* hdr = reinterpret_cast<const FileHeader*>(base);
+    if (hdr->magic != kMagic) {
+        v.error = "bad magic: not a replay file";
+        return v;
+    }
+    if (hdr->version != kVersion) {
+        v.error = "unsupported format version (reader supports v2)";
+        return v;
+    }
+    // Divide rather than multiply: count * sizeof(WireRecord) wraps for a
+    // hostile count near UINT64_MAX and would slide straight past a <= check.
+    if (hdr->record_count > (size - sizeof(FileHeader)) / sizeof(WireRecord)) {
+        v.error = "record_count exceeds file size (truncated or corrupt)";
+        return v;
+    }
+    v.records = reinterpret_cast<const WireRecord*>(base + sizeof(FileHeader));
+    v.count   = hdr->record_count;
+    return v;
+}
 
 }  // namespace ohlcv::replay
